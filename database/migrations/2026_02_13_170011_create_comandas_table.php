@@ -19,16 +19,14 @@ return new class extends Migration
                 ->constrained('meseros')
                 ->cascadeOnDelete();
 
-            $table->enum('estado', ['abierta', 'en_proceso', 'lista', 'cerrada'])
-                ->default('abierta');
+            $table->enum('estado', ['en_proceso', 'finalizado'])
+                ->default('en_proceso');
 
             $table->decimal('total', 10, 2)->default(0);
-
             $table->text('observaciones')->nullable();
 
             $table->timestamps();
 
-            // Solo 1 comanda abierta por mesa (opcional pero MUY útil)
             $table->index(['mesa_id', 'estado']);
         });
     }
@@ -38,4 +36,5 @@ return new class extends Migration
         Schema::dropIfExists('comandas');
     }
 };
+
 

@@ -2,6 +2,7 @@
 
 use Livewire\Component;
 use App\Models\Mesa;
+use App\Models\Comanda;
 
 new class extends Component
 {
@@ -13,9 +14,34 @@ new class extends Component
                 ->get(),
         ];
     }
+
+   public function abrirMesa(int $mesaId)
+    {
+        $mesa = Mesa::findOrFail($mesaId);
+
+        // Buscar comanda activa
+        $comanda = Comanda::where('mesa_id', $mesaId)
+            ->where('estado', 'en_proceso')
+            ->latest('id')
+            ->first();
+
+        // Si no existe, crearla
+        if (! $comanda) {
+            $comanda = Comanda::create([
+                'mesa_id' => $mesaId,
+                'mesero_id' => session('mesero_id'),
+                'estado' => 'en_proceso',
+                'total' => 0,
+            ]);
+
+            // marcar mesa ocupada
+            $mesa->update(['estado' => 'ocupada']);
+        }
+
+        return redirect()->route('comandas.tomar', $comanda->id);
+    }
 };
 ?>
-
 
 <div class="min-h-screen bg-slate-950 text-white p-4 md:p-6">
     <div class="max-w-7xl mx-auto">
@@ -54,7 +80,7 @@ new class extends Component
                                 : 'bg-emerald-600/20 border-emerald-500/40 hover:bg-emerald-600/30 focus:ring-emerald-500'
                             }}
                         "
-                        onclick="window.location='#'"
+                        wire:click="abrirMesa({{ $mesa->id }})"
                     >
                         <div class="
                             w-full h-10 md:h-12 rounded-t-2xl rounded-b-xl border

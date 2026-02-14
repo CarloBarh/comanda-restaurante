@@ -14,8 +14,8 @@ class MeseroSeeder extends Seeder
     public function run(): void
     {
         Mesero::create([
-            'nombre' => 'Carlos',
-            'pin' => '1234',
+            'nombre' => 'Eduardo',
+            'pin' => '2001',
             'activo' => true,
         ]);
     }
