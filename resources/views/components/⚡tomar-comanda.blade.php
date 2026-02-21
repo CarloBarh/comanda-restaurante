@@ -1,32 +1,41 @@
 <?php
 
 use Livewire\Component;
-use App\Models\Comanda;
+use Illuminate\Support\Facades\DB;
+use App\Models\Mesa;
 use App\Models\Categoria;
 use App\Models\Platillo;
+use App\Models\Comanda;
+use App\Models\ComandaDetalle;
 
 new class extends Component
 {
-    public int $comandaId;
+    public bool $showTamanoModal = false;
+    public ?int $tamanoPlatilloId = null;
+    public string $tamanoPlatilloNombre = '';
+    public array $tamanosOpciones = []; // [{tamano_id, tamano_nombre, precio}]
+    public int $mesaId;
     public ?int $categoriaId = null;
     public string $busqueda = '';
 
-    public function mount(int $comanda): void
+    public function mount(int $mesa): void
     {
-        $this->comandaId = $comanda;
+        $this->mesaId = $mesa;
 
-        // Categoría por defecto (primera)
-        $first = Categoria::query()->orderBy('id')->first();
+        $first = Categoria::query()->orderBy('nombre')->first();
         $this->categoriaId = $first?->id;
+    }
+
+    protected function draftKey(): string
+    {
+        return "draft_mesa_{$this->mesaId}";
     }
 
     public function with(): array
     {
-        $comanda = Comanda::with(['mesa','mesero'])->findOrFail($this->comandaId);
+        $mesa = Mesa::findOrFail($this->mesaId);
 
-        $categorias = Categoria::query()
-            ->orderBy('nombre')
-            ->get();
+        $categorias = Categoria::query()->orderBy('nombre')->get();
 
         $platillos = Platillo::query()
             ->when($this->categoriaId, fn($q) => $q->where('categoria_id', $this->categoriaId))
@@ -34,7 +43,43 @@ new class extends Component
             ->orderBy('nombre')
             ->get();
 
-        return compact('comanda', 'categorias', 'platillos');
+        $draft = session()->get($this->draftKey(), []);
+
+        // Opcional: armar “carrito” con nombres
+        $items = collect($draft)->map(function ($item, $key) {
+        $p = \App\Models\Platillo::find($item['platillo_id']);
+        $cantidad = (int) ($item['cantidad'] ?? 1);
+
+        $tamanoId = $item['tamano_id'] ?? null;
+
+        if ($tamanoId) {
+            $precioUnit = (float) (\App\Models\PlatilloPrecio::where('platillo_id', $item['platillo_id'])
+                ->where('tamano_id', $tamanoId)
+                ->value('precio') ?? 0);
+        } else {
+            $precioUnit = (float) ($p?->precio ?? 0);
+        }
+
+        $subtotal = $precioUnit * $cantidad;
+
+        $tamanoNombre = null;
+        if ($tamanoId) {
+            $tamanoNombre = \App\Models\Tamano::whereKey($tamanoId)->value('nombre');
+        }
+
+        return [
+            'key' => $key,
+            'nombre' => $p?->nombre ?? 'Platillo',
+            'tamano' => $tamanoNombre,
+            'cantidad' => $cantidad,
+            'precio_unitario' => $precioUnit,
+            'subtotal' => $subtotal,
+        ];
+    })->values();
+
+    $totalDraft = (float) $items->sum('subtotal');
+
+        return compact('mesa', 'categorias', 'platillos', 'items', 'totalDraft');
     }
 
     public function seleccionarCategoria(int $categoriaId): void
@@ -43,16 +88,169 @@ new class extends Component
         $this->busqueda = '';
     }
 
-    // Helper para la imagen (ajústalo según cómo guardes "imagen")
+    public function clickPlatillo(int $platilloId): void
+    {
+        $platillo = \App\Models\Platillo::findOrFail($platilloId);
+
+        // Detectar si tiene precios por tamaño
+        $tamanos = \App\Models\PlatilloPrecio::query()
+            ->join('tamanos', 'tamanos.id', '=', 'platillo_precios.tamano_id')
+            ->where('platillo_precios.platillo_id', $platilloId)
+            ->orderBy('tamanos.id')
+            ->get([
+                'platillo_precios.tamano_id as tamano_id',
+                'tamanos.nombre as tamano_nombre',
+                'platillo_precios.precio as precio',
+            ])
+            ->toArray();
+
+        if (count($tamanos) > 0) {
+            // Abrir modal para elegir tamaño
+            $this->showTamanoModal = true;
+            $this->tamanoPlatilloId = $platilloId;
+            $this->tamanoPlatilloNombre = $platillo->nombre;
+            $this->tamanosOpciones = $tamanos;
+            return;
+        }
+
+        // Si no tiene tamaños, agregar directo
+        $this->agregarAlDraft($platilloId, null);
+    }
+
+    public function agregarAlDraft(int $platilloId, ?int $tamanoId): void
+    {
+        $draft = session()->get($this->draftKey(), []);
+
+        // key única por platillo + tamaño
+        $key = $platilloId . '|' . ($tamanoId ?? '');
+
+        if (!isset($draft[$key])) {
+            $draft[$key] = [
+                'platillo_id' => $platilloId,
+                'tamano_id' => $tamanoId,
+                'cantidad' => 1,
+                'notas' => null,
+            ];
+        } else {
+            $draft[$key]['cantidad']++;
+        }
+
+        session()->put($this->draftKey(), $draft);
+    }
+
+    public function seleccionarTamano(int $tamanoId): void
+    {
+        if (!$this->tamanoPlatilloId) return;
+
+        $this->agregarAlDraft($this->tamanoPlatilloId, $tamanoId);
+
+        // cerrar modal
+        $this->cerrarTamanoModal();
+    }
+
+    public function cerrarTamanoModal(): void
+    {
+        $this->showTamanoModal = false;
+        $this->tamanoPlatilloId = null;
+        $this->tamanoPlatilloNombre = '';
+        $this->tamanosOpciones = [];
+    }
+
+    public function volverAMesas()
+    {
+        session()->forget($this->draftKey());
+
+        // Por si estaba marcada ocupada en pruebas:
+        Mesa::whereKey($this->mesaId)->update(['estado' => 'libre']);
+
+        return redirect()->route('mesas');
+    }
+
+    public function enviarACocina()
+    {
+        $draft = session()->get($this->draftKey(), []);
+
+        if (count($draft) === 0) {
+            $this->addError('draft', 'Agrega al menos un platillo antes de enviar.');
+            return null;
+        }
+
+        $meseroId = session('mesero_id');
+        if (!$meseroId) {
+            return redirect()->route('pin');
+        }
+
+        DB::transaction(function () use ($draft, $meseroId) {
+            $comanda = Comanda::create([
+                'mesa_id' => $this->mesaId,
+                'mesero_id' => $meseroId,
+                'estado' => 'en_proceso',
+                'total' => 0,
+            ]);
+
+            $total = 0;
+
+            foreach ($draft as $item) {
+                $platillo = Platillo::findOrFail($item['platillo_id']);
+
+                $precioUnit = (float) $platillo->precio;
+                $subtotal = $precioUnit * (int) $item['cantidad'];
+                $total += $subtotal;
+
+                ComandaDetalle::create([
+                    'comanda_id' => $comanda->id,
+                    'platillo_id' => $platillo->id,
+                    'tamano_id' => null,
+                    'cantidad' => (int) $item['cantidad'],
+                    'precio_unitario' => $precioUnit,
+                    'subtotal' => $subtotal,
+                    'estado' => 'pendiente',
+                    'notas' => $item['notas'] ?? null,
+                ]);
+            }
+
+            $comanda->update(['total' => $total]);
+            Mesa::whereKey($this->mesaId)->update(['estado' => 'ocupada']);
+        });
+
+        session()->forget($this->draftKey());
+
+        // cerrar sesión rápida
+        session()->forget('mesero_id');
+
+        return redirect()->route('pin');
+    }
+
     public function imagenUrl(?string $imagen): string
     {
-        if (! $imagen) return 'https://via.placeholder.com/300x200?text=Sin+Imagen';
-
-        // si ya es URL completa:
+        if (! $imagen) return 'https://via.placeholder.com/400x300?text=Sin+Imagen';
         if (str_starts_with($imagen, 'http')) return $imagen;
-
-        // si está en storage/app/public:
         return asset('storage/'.$imagen);
+    }
+
+    public function quitar(string $key): void
+    {
+        $draft = session()->get($this->draftKey(), []);
+
+        if (!isset($draft[$key])) return;
+
+        $draft[$key]['cantidad'] = ((int) $draft[$key]['cantidad']) - 1;
+
+        if ($draft[$key]['cantidad'] <= 0) {
+            unset($draft[$key]);
+        }
+
+        session()->put($this->draftKey(), $draft);
+    }
+
+    public function eliminarItem(string $key): void
+    {
+        $draft = session()->get($this->draftKey(), []);
+
+        if (isset($draft[$key])) {
+            unset($draft[$key]);
+            session()->put($this->draftKey(), $draft);
+        }
     }
 };
 ?>
@@ -64,9 +262,7 @@ new class extends Component
         <aside class="w-64 md:w-72 bg-slate-900/60 border-r border-slate-800 p-4 flex flex-col">
             <div class="mb-4">
                 <div class="text-xs text-slate-400">Mesa</div>
-                <div class="text-2xl font-black">{{ $comanda->mesa->numero ?? 'N/A' }}</div>
-                <div class="text-xs text-slate-400 mt-2">Comanda #{{ $comanda->id }}</div>
-                <div class="text-xs text-slate-400">Estado: {{ $comanda->estado }}</div>
+                <div class="text-2xl font-black">{{ $mesa->numero }}</div>
             </div>
 
             <div class="mb-3">
@@ -99,8 +295,13 @@ new class extends Component
             </div>
 
             <div class="pt-4 border-t border-slate-800 mt-4">
+                @error('draft')
+                    <div class="text-red-400 text-sm mb-2">{{ $message }}</div>
+                @enderror
+
                 <button
                     type="button"
+                    wire:click="enviarACocina"
                     class="w-full rounded-xl bg-emerald-600/90 hover:bg-emerald-600 px-4 py-3 font-bold transition"
                 >
                     Enviar a cocina
@@ -108,8 +309,8 @@ new class extends Component
 
                 <button
                     type="button"
+                    wire:click="volverAMesas"
                     class="w-full mt-2 rounded-xl bg-slate-800 hover:bg-slate-700 px-4 py-3 font-semibold transition"
-                    onclick="window.location='{{ route('mesas') }}'"
                 >
                     Volver a mesas
                 </button>
@@ -123,37 +324,131 @@ new class extends Component
                     <h1 class="text-2xl md:text-3xl font-bold">
                         {{ optional($categorias->firstWhere('id', $categoriaId))->nombre ?? 'Platillos' }}
                     </h1>
-                    <p class="text-slate-400 mt-1">
-                        Toca un platillo para agregarlo a la comanda
-                    </p>
+                    <p class="text-slate-400 mt-1">Toca un platillo para agregarlo a la orden</p>
                 </div>
             </div>
 
-            @if($platillos->isEmpty())
-                <div class="text-slate-400">No hay platillos en esta categoría.</div>
+            <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+                @foreach($platillos as $p)
+                    <button
+                        type="button"
+                        wire:click="clickPlatillo({{ $p->id }})"
+                        class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-900/40 hover:bg-slate-900/60 transition active:scale-[0.99]"
+                    >
+                        <div class="aspect-[4/3] bg-slate-950">
+                            <img
+                                src="{{ $this->imagenUrl($p->imagen) }}"
+                                alt="{{ $p->nombre }}"
+                                class="w-full h-full object-cover"
+                                loading="lazy"
+                            />
+                        </div>
+                        <div class="p-3">
+                            <div class="font-bold leading-tight line-clamp-2">{{ $p->nombre }}</div>
+                        </div>
+                    </button>
+                @endforeach
+            </div>
+        </main>
+
+        {{-- Panel derecho opcional: resumen (mínimo) --}}
+        <aside class="hidden xl:block w-72 bg-slate-900/40 border-l border-slate-800 p-4 overflow-auto">
+            <div class="font-bold text-lg mb-3">Orden</div>
+
+            @if($items->isEmpty())
+                <div class="text-slate-400 text-sm">Aún no agregas platillos.</div>
             @else
-                <div class="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
-                    @foreach($platillos as $p)
-                        <button
-                            type="button"
-                            class="rounded-2xl overflow-hidden border border-slate-800 bg-slate-900/40 hover:bg-slate-900/60 transition active:scale-[0.99]"
-                            {{-- Luego aquí haremos wire:click="agregarPlatillo({{ $p->id }})" --}}
-                        >
-                            <div class="aspect-[4/3] bg-slate-950">
-                                <img
-                                    src="{{ $this->imagenUrl($p->imagen) }}"
-                                    alt="{{ $p->nombre }}"
-                                    class="w-full h-full object-cover"
-                                    loading="lazy"
-                                />
+                <div class="space-y-2">
+                    @foreach($items as $it)
+                        <div class="flex items-center justify-between gap-3 bg-slate-950/40 border border-slate-800 rounded-xl p-3">
+                            <div class="min-w-0 flex-1">
+                                <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
+                                @if(!empty($it['tamano']))
+                                    <div class="text-xs text-slate-400">Tamaño: {{ $it['tamano'] }}</div>
+                                @endif
+
+                                <div class="mt-1 flex items-center justify-between gap-2">
+                                    <div class="text-slate-300 text-sm">
+                                        L {{ number_format($it['precio_unitario'], 2) }} c/u
+                                    </div>
+                                    <div class="font-black text-slate-100">
+                                        L {{ number_format($it['subtotal'], 2) }}
+                                    </div>
+                                </div>
                             </div>
-                            <div class="p-3">
-                                <div class="font-bold leading-tight line-clamp-2">{{ $p->nombre }}</div>
+
+                            <div class="flex items-center gap-2">
+                                {{-- Cantidad más grande y visible --}}
+                                <div class="w-14 h-12 rounded-xl bg-slate-800 border border-slate-700
+                                            flex items-center justify-center font-black text-2xl">
+                                    {{ $it['cantidad'] }}
+                                </div>
+
+                                {{-- Botón limpio para quitar --}}
+                                <button
+                                    type="button"
+                                    wire:click="quitar('{{ $it['key'] }}')"
+                                    class="w-12 h-12 rounded-xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.98] transition
+                                        font-black text-2xl"
+                                    title="Quitar (resta 1 o elimina)"
+                                >
+                                    ✕
+                                </button>
                             </div>
-                        </button>
+                        </div>
                     @endforeach
                 </div>
             @endif
-        </main>
+            @if(!$items->isEmpty())
+                <div class="mt-4 pt-4 border-t border-slate-800">
+                    <div class="flex items-center justify-between">
+                        <div class="text-slate-300 font-semibold">Subtotal:</div>
+                        <div class="text-2xl font-black">L {{ number_format($totalDraft, 2) }}</div>
+                    </div>
+                </div>
+            @endif
+        </aside>
+
     </div>
+        @if($showTamanoModal)
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div class="absolute inset-0 bg-black/70" wire:click="cerrarTamanoModal"></div>
+
+                <div class="relative w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5">
+                    <div class="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                            <div class="text-sm text-slate-400">Selecciona tamaño</div>
+                            <div class="text-xl font-black">{{ $tamanoPlatilloNombre }}</div>
+                        </div>
+
+                        <button
+                            type="button"
+                            wire:click="cerrarTamanoModal"
+                            class="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 font-black text-2xl"
+                        >
+                            ✕
+                        </button>
+                    </div>
+
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        @foreach($tamanosOpciones as $op)
+                            <button
+                                type="button"
+                                wire:click="seleccionarTamano({{ $op['tamano_id'] }})"
+                                class="rounded-2xl border border-slate-800 bg-slate-950/40 hover:bg-slate-950/60 p-4 text-left transition active:scale-[0.99]"
+                            >
+                                <div class="font-bold text-lg">{{ $op['tamano_nombre'] }}</div>
+                                <div class="text-slate-300 mt-1 font-black text-xl">
+                                    L {{ number_format((float)$op['precio'], 2) }}
+                                </div>
+                            </button>
+                        @endforeach
+                    </div>
+
+                    <div class="text-xs text-slate-500 mt-4">
+                        Tip: tocar afuera también cierra el modal.
+                    </div>
+                </div>
+            </div>
+        @endif
 </div>

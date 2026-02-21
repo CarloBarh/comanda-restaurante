@@ -16,30 +16,10 @@ new class extends Component
     }
 
    public function abrirMesa(int $mesaId)
-    {
-        $mesa = Mesa::findOrFail($mesaId);
-
-        // Buscar comanda activa
-        $comanda = Comanda::where('mesa_id', $mesaId)
-            ->where('estado', 'en_proceso')
-            ->latest('id')
-            ->first();
-
-        // Si no existe, crearla
-        if (! $comanda) {
-            $comanda = Comanda::create([
-                'mesa_id' => $mesaId,
-                'mesero_id' => session('mesero_id'),
-                'estado' => 'en_proceso',
-                'total' => 0,
-            ]);
-
-            // marcar mesa ocupada
-            $mesa->update(['estado' => 'ocupada']);
-        }
-
-        return redirect()->route('comandas.tomar', $comanda->id);
-    }
+{
+    // Solo abre el borrador para esa mesa (NO crea comanda)
+    return redirect()->route('comandas.tomar', ['mesa' => $mesaId]);
+}
 };
 ?>
 
