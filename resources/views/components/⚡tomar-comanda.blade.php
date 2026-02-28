@@ -17,39 +17,77 @@ new class extends Component
     public int $mesaId;
     public ?int $categoriaId = null;
     public string $busqueda = '';
+    public bool $showNotaModal = false;
+    public ?string $notaKey = null;
+    public string $notaTexto = '';
+    public string $notaTitulo = '';
+    public ?int $comandaId = null; // si la mesa ya tiene una comanda en_proceso
 
     public function mount(int $mesa): void
     {
         $this->mesaId = $mesa;
 
-        $first = Categoria::query()->orderBy('nombre')->first();
+        $this->comandaId = \App\Models\Comanda::where('mesa_id', $this->mesaId)
+            ->where('estado', 'en_proceso')
+            ->latest('id')
+            ->value('id'); // null si no hay
+
+        $first = \App\Models\Categoria::query()->orderBy('nombre')->first();
         $this->categoriaId = $first?->id;
     }
 
     protected function draftKey(): string
     {
+        // si hay comanda activa, el draft va ligado a esa comanda
+        if ($this->comandaId) {
+            return "draft_comanda_{$this->comandaId}";
+        }
+
+        // si no hay comanda, draft por mesa
         return "draft_mesa_{$this->mesaId}";
     }
 
     public function with(): array
-    {
-        $mesa = Mesa::findOrFail($this->mesaId);
+{
+    $mesa = Mesa::findOrFail($this->mesaId);
 
-        $categorias = Categoria::query()->orderBy('nombre')->get();
+    $enviados = collect();
+    $totalEnviado = 0.0;
 
-        $platillos = Platillo::query()
-            ->when($this->categoriaId, fn($q) => $q->where('categoria_id', $this->categoriaId))
-            ->when($this->busqueda !== '', fn($q) => $q->where('nombre', 'like', '%'.$this->busqueda.'%'))
-            ->orderBy('nombre')
-            ->get();
+    if ($this->comandaId) {
+        $enviados = \App\Models\ComandaDetalle::query()
+            ->with(['platillo', 'tamano'])
+            ->where('comanda_id', $this->comandaId)
+            ->orderBy('id')
+            ->get()
+            ->map(function ($d) {
+                return [
+                    'nombre' => $d->platillo?->nombre ?? 'Platillo',
+                    'tamano' => $d->tamano?->nombre,
+                    'cantidad' => (int) $d->cantidad,
+                    'precio_unitario' => (float) $d->precio_unitario,
+                    'subtotal' => (float) $d->subtotal,
+                    'notas' => $d->notas,
+                ];
+            });
 
-        $draft = session()->get($this->draftKey(), []);
+        $totalEnviado = (float) $enviados->sum('subtotal');
+    }
 
-        // Opcional: armar “carrito” con nombres
-        $items = collect($draft)->map(function ($item, $key) {
-        $p = \App\Models\Platillo::find($item['platillo_id']);
+    $categorias = Categoria::query()->orderBy('nombre')->get();
+
+    $platillos = Platillo::query()
+        ->when($this->categoriaId, fn($q) => $q->where('categoria_id', $this->categoriaId))
+        ->when($this->busqueda !== '', fn($q) => $q->where('nombre', 'like', '%'.$this->busqueda.'%'))
+        ->orderBy('nombre')
+        ->get();
+
+    $draft = session()->get($this->draftKey(), []);
+
+    $items = collect($draft)->map(function ($item, $key) {
+        $p = Platillo::find($item['platillo_id']);
+
         $cantidad = (int) ($item['cantidad'] ?? 1);
-
         $tamanoId = $item['tamano_id'] ?? null;
 
         if ($tamanoId) {
@@ -74,13 +112,24 @@ new class extends Component
             'cantidad' => $cantidad,
             'precio_unitario' => $precioUnit,
             'subtotal' => $subtotal,
+            'notas' => $item['notas'] ?? null,
         ];
     })->values();
 
     $totalDraft = (float) $items->sum('subtotal');
+    $totalGeneral = (float) ($totalEnviado + $totalDraft);
 
-        return compact('mesa', 'categorias', 'platillos', 'items', 'totalDraft');
-    }
+    return compact(
+        'mesa',
+        'categorias',
+        'platillos',
+        'enviados',
+        'totalEnviado',
+        'items',
+        'totalDraft',
+        'totalGeneral'
+    );
+}
 
     public function seleccionarCategoria(int $categoriaId): void
     {
@@ -160,8 +209,10 @@ new class extends Component
     {
         session()->forget($this->draftKey());
 
-        // Por si estaba marcada ocupada en pruebas:
-        Mesa::whereKey($this->mesaId)->update(['estado' => 'libre']);
+        // Solo forzamos mesa libre si NO había comanda activa
+        if (!$this->comandaId) {
+            \App\Models\Mesa::whereKey($this->mesaId)->update(['estado' => 'libre']);
+        }
 
         return redirect()->route('mesas');
     }
@@ -181,27 +232,55 @@ new class extends Component
         }
 
         DB::transaction(function () use ($draft, $meseroId) {
-            $comanda = Comanda::create([
-                'mesa_id' => $this->mesaId,
-                'mesero_id' => $meseroId,
-                'estado' => 'en_proceso',
-                'total' => 0,
-            ]);
 
-            $total = 0;
+            // 1) Obtener o crear comanda
+            if ($this->comandaId) {
+                $comanda = \App\Models\Comanda::findOrFail($this->comandaId);
+            } else {
+                $comanda = \App\Models\Comanda::create([
+                    'mesa_id' => $this->mesaId,
+                    'mesero_id' => $meseroId,
+                    'estado' => 'en_proceso',
+                    'total' => 0,
+                ]);
+
+                // Mesa se ocupa SOLO cuando se crea comanda
+                \App\Models\Mesa::whereKey($this->mesaId)->update(['estado' => 'ocupada']);
+
+                // Guardar comandaId para futuras operaciones en esta pantalla
+                $this->comandaId = $comanda->id;
+            }
+
+            // 2) Insertar detalles
+            $totalAgregado = 0;
 
             foreach ($draft as $item) {
-                $platillo = Platillo::findOrFail($item['platillo_id']);
+                $platillo = \App\Models\Platillo::findOrFail($item['platillo_id']);
 
-                $precioUnit = (float) $platillo->precio;
-                $subtotal = $precioUnit * (int) $item['cantidad'];
-                $total += $subtotal;
+                $tamanoId = $item['tamano_id'] ?? null;
+                if ($tamanoId === '' || $tamanoId === 0 || $tamanoId === '0') {
+                    $tamanoId = null;
+                } elseif ($tamanoId !== null) {
+                    $tamanoId = (int) $tamanoId;
+                }
 
-                ComandaDetalle::create([
+                if ($tamanoId) {
+                    $precioUnit = (float) (\App\Models\PlatilloPrecio::where('platillo_id', $platillo->id)
+                        ->where('tamano_id', $tamanoId)
+                        ->value('precio') ?? 0);
+                } else {
+                    $precioUnit = (float) ($platillo->precio ?? 0);
+                }
+
+                $cantidad = (int) ($item['cantidad'] ?? 1);
+                $subtotal = $precioUnit * $cantidad;
+                $totalAgregado += $subtotal;
+
+                \App\Models\ComandaDetalle::create([
                     'comanda_id' => $comanda->id,
                     'platillo_id' => $platillo->id,
-                    'tamano_id' => null,
-                    'cantidad' => (int) $item['cantidad'],
+                    'tamano_id' => $tamanoId,
+                    'cantidad' => $cantidad,
                     'precio_unitario' => $precioUnit,
                     'subtotal' => $subtotal,
                     'estado' => 'pendiente',
@@ -209,8 +288,9 @@ new class extends Component
                 ]);
             }
 
-            $comanda->update(['total' => $total]);
-            Mesa::whereKey($this->mesaId)->update(['estado' => 'ocupada']);
+            // 3) Recalcular total (más seguro que solo sumar)
+            $nuevoTotal = (float) \App\Models\ComandaDetalle::where('comanda_id', $comanda->id)->sum('subtotal');
+            $comanda->update(['total' => $nuevoTotal]);
         });
 
         session()->forget($this->draftKey());
@@ -252,6 +332,61 @@ new class extends Component
             session()->put($this->draftKey(), $draft);
         }
     }
+
+    public function abrirNotas(string $key): void
+    {
+        $draft = session()->get($this->draftKey(), []);
+
+        if (!isset($draft[$key])) return;
+
+        $platilloId = $draft[$key]['platillo_id'] ?? null;
+        $platillo = $platilloId ? \App\Models\Platillo::find($platilloId) : null;
+
+        $this->notaKey = $key;
+        $this->notaTexto = (string) ($draft[$key]['notas'] ?? '');
+        $this->notaTitulo = $platillo?->nombre ?? 'Notas';
+        $this->showNotaModal = true;
+    }
+
+    public function guardarNotas(): void
+    {
+        if (!$this->notaKey) return;
+
+        $draft = session()->get($this->draftKey(), []);
+
+        if (!isset($draft[$this->notaKey])) return;
+
+        $texto = trim($this->notaTexto);
+
+        // si está vacío, guardamos null para no ensuciar
+        $draft[$this->notaKey]['notas'] = $texto === '' ? null : $texto;
+
+        session()->put($this->draftKey(), $draft);
+
+        $this->cerrarNotas();
+    }
+
+    public function limpiarNotas(): void
+    {
+        if (!$this->notaKey) return;
+
+        $draft = session()->get($this->draftKey(), []);
+        if (isset($draft[$this->notaKey])) {
+            $draft[$this->notaKey]['notas'] = null;
+            session()->put($this->draftKey(), $draft);
+        }
+
+        $this->notaTexto = '';
+        $this->cerrarNotas();
+    }
+
+    public function cerrarNotas(): void
+    {
+        $this->showNotaModal = false;
+        $this->notaKey = null;
+        $this->notaTexto = '';
+        $this->notaTitulo = '';
+    }
 };
 ?>
 
@@ -259,8 +394,18 @@ new class extends Component
     <div class="h-screen flex">
 
         {{-- Sidebar categorías --}}
+        
         <aside class="w-64 md:w-72 bg-slate-900/60 border-r border-slate-800 p-4 flex flex-col">
             <div class="mb-4">
+                @if($comandaId)
+                    <div class="text-xs mt-2 inline-flex items-center gap-2 px-2 py-1 rounded-full bg-amber-500/10 border border-amber-500/30 text-amber-200">
+                        Mesa ocupada — agregando a comanda #{{ $comandaId }}
+                    </div>
+                @else
+                    <div class="text-xs mt-2 inline-flex items-center gap-2 px-2 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-200">
+                        Mesa disponible — borrador
+                    </div>
+                @endif
                 <div class="text-xs text-slate-400">Mesa</div>
                 <div class="text-2xl font-black">{{ $mesa->numero }}</div>
             </div>
@@ -355,50 +500,121 @@ new class extends Component
         <aside class="hidden xl:block w-72 bg-slate-900/40 border-l border-slate-800 p-4 overflow-auto">
             <div class="font-bold text-lg mb-3">Orden</div>
 
-            @if($items->isEmpty())
-                <div class="text-slate-400 text-sm">Aún no agregas platillos.</div>
-            @else
-                <div class="space-y-2">
-                    @foreach($items as $it)
-                        <div class="flex items-center justify-between gap-3 bg-slate-950/40 border border-slate-800 rounded-xl p-3">
-                            <div class="min-w-0 flex-1">
-                                <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
-                                @if(!empty($it['tamano']))
-                                    <div class="text-xs text-slate-400">Tamaño: {{ $it['tamano'] }}</div>
-                                @endif
+{{-- 1) YA ENVIADO (solo lectura) --}}
+@if($enviados->isNotEmpty())
+    <div class="mb-4">
+        <div class="text-xs text-slate-400 mb-2">Ya enviado</div>
 
-                                <div class="mt-1 flex items-center justify-between gap-2">
-                                    <div class="text-slate-300 text-sm">
-                                        L {{ number_format($it['precio_unitario'], 2) }} c/u
-                                    </div>
-                                    <div class="font-black text-slate-100">
-                                        L {{ number_format($it['subtotal'], 2) }}
-                                    </div>
-                                </div>
+        <div class="space-y-2">
+            @foreach($enviados as $it)
+                <div class="bg-slate-950/30 border border-slate-800 rounded-xl p-3">
+                    <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
+
+                    @if(!empty($it['tamano']))
+                        <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
+                    @endif
+
+                    @if(!empty($it['notas']))
+                        <div class="text-xs text-slate-400 mt-1 line-clamp-2">
+                            📝 {{ $it['notas'] }}
+                        </div>
+                    @endif
+
+                    <div class="mt-2 flex items-center justify-between">
+                        <div class="text-slate-300 text-sm">x{{ $it['cantidad'] }}</div>
+                        <div class="font-black">L {{ number_format($it['subtotal'], 2) }}</div>
+                    </div>
+                </div>
+            @endforeach
+        </div>
+
+        <div class="mt-3 flex items-center justify-between text-sm">
+            <div class="text-slate-400">Subtotal enviado</div>
+            <div class="font-black">L {{ number_format($totalEnviado, 2) }}</div>
+        </div>
+    </div>
+@endif
+
+{{-- 2) NUEVO (BORRADOR) (editable) --}}
+<div class="mb-4">
+    <div class="text-xs text-slate-400 mb-2">Nuevo (borrador)</div>
+
+    @if($items->isEmpty())
+        <div class="text-slate-400 text-sm">Aún no agregas platillos nuevos.</div>
+    @else
+        <div class="space-y-2">
+            @foreach($items as $it)
+                <div class="flex items-center justify-between gap-3 bg-slate-950/40 border border-slate-800 rounded-xl p-3">
+                    {{-- Clickeable: abrir notas SOLO en borrador --}}
+                    <button
+                        type="button"
+                        wire:click="abrirNotas('{{ $it['key'] }}')"
+                        class="min-w-0 flex-1 text-left"
+                    >
+                        <div class="flex items-center gap-2">
+                            <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
+
+                            @if(!empty($it['notas']))
+                                <span class="text-[11px] px-2 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-200">
+                                    📝 Nota
+                                </span>
+                            @endif
+                        </div>
+
+                        @if(!empty($it['tamano']))
+                            <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
+                        @endif
+
+                        <div class="mt-1 flex items-center justify-between gap-2">
+                            <div class="text-slate-300 text-sm">
+                                L {{ number_format($it['precio_unitario'], 2) }} c/u
                             </div>
-
-                            <div class="flex items-center gap-2">
-                                {{-- Cantidad más grande y visible --}}
-                                <div class="w-14 h-12 rounded-xl bg-slate-800 border border-slate-700
-                                            flex items-center justify-center font-black text-2xl">
-                                    {{ $it['cantidad'] }}
-                                </div>
-
-                                {{-- Botón limpio para quitar --}}
-                                <button
-                                    type="button"
-                                    wire:click="quitar('{{ $it['key'] }}')"
-                                    class="w-12 h-12 rounded-xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.98] transition
-                                        font-black text-2xl"
-                                    title="Quitar (resta 1 o elimina)"
-                                >
-                                    ✕
-                                </button>
+                            <div class="font-black text-slate-100">
+                                L {{ number_format($it['subtotal'], 2) }}
                             </div>
                         </div>
-                    @endforeach
+
+                        @if(!empty($it['notas']))
+                            <div class="text-xs text-slate-400 mt-1 line-clamp-1">
+                                {{ $it['notas'] }}
+                            </div>
+                        @endif
+                    </button>
+
+                    <div class="flex items-center gap-2">
+                        <div class="w-14 h-12 rounded-xl bg-slate-800 border border-slate-700
+                                    flex items-center justify-center font-black text-2xl">
+                            {{ $it['cantidad'] }}
+                        </div>
+
+                        {{-- X: resta 1 o elimina (solo borrador) --}}
+                        <button
+                            type="button"
+                            wire:click="quitar('{{ $it['key'] }}')"
+                            class="w-12 h-12 rounded-xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.98] transition font-black text-2xl"
+                            title="Quitar (resta 1 o elimina)"
+                        >
+                            ✕
+                        </button>
+                    </div>
                 </div>
-            @endif
+            @endforeach
+        </div>
+
+        <div class="mt-3 flex items-center justify-between text-sm">
+            <div class="text-slate-400">Subtotal borrador</div>
+            <div class="font-black">L {{ number_format($totalDraft, 2) }}</div>
+        </div>
+    @endif
+</div>
+
+{{-- 3) TOTAL GENERAL --}}
+<div class="pt-4 border-t border-slate-800">
+    <div class="flex items-center justify-between">
+        <div class="text-slate-300 font-semibold">Total</div>
+        <div class="text-2xl font-black">L {{ number_format($totalGeneral, 2) }}</div>
+    </div>
+</div>
             @if(!$items->isEmpty())
                 <div class="mt-4 pt-4 border-t border-slate-800">
                     <div class="flex items-center justify-between">
@@ -447,6 +663,68 @@ new class extends Component
 
                     <div class="text-xs text-slate-500 mt-4">
                         Tip: tocar afuera también cierra el modal.
+                    </div>
+                </div>
+            </div>
+        @endif
+
+        @if($showNotaModal)
+            <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+                <div class="absolute inset-0 bg-black/70" wire:click="cerrarNotas"></div>
+
+                <div class="relative w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5">
+                    <div class="flex items-start justify-between gap-4 mb-4">
+                        <div>
+                            <div class="text-sm text-slate-400">Notas para</div>
+                            <div class="text-xl font-black">{{ $notaTitulo }}</div>
+                        </div>
+
+                        <button
+                            type="button"
+                            wire:click="cerrarNotas"
+                            class="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 font-black text-2xl"
+                        >
+                            ✕
+                        </button>
+                    </div>
+
+                    <textarea
+                        wire:model.live="notaTexto"
+                        rows="4"
+                        placeholder="Ej: sin cebolla, bien cocido, sin hielo, aparte salsa..."
+                        class="w-full rounded-2xl bg-slate-950/60 border border-slate-800 p-3 outline-none focus:ring-2 focus:ring-slate-600"
+                    ></textarea>
+
+                    <div class="flex items-center justify-between gap-3 mt-4">
+                        <button
+                            type="button"
+                            wire:click="limpiarNotas"
+                            class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold transition"
+                        >
+                            Quitar nota
+                        </button>
+
+                        <div class="flex items-center gap-3">
+                            <button
+                                type="button"
+                                wire:click="cerrarNotas"
+                                class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold transition"
+                            >
+                                Cancelar
+                            </button>
+
+                            <button
+                                type="button"
+                                wire:click="guardarNotas"
+                                class="px-5 py-3 rounded-xl bg-emerald-600/90 hover:bg-emerald-600 font-bold transition"
+                            >
+                                Guardar
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="text-xs text-slate-500 mt-3">
+                        Tip: tocar afuera también cierra.
                     </div>
                 </div>
             </div>

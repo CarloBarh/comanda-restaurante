@@ -16,10 +16,10 @@ new class extends Component
     }
 
    public function abrirMesa(int $mesaId)
-{
-    // Solo abre el borrador para esa mesa (NO crea comanda)
-    return redirect()->route('comandas.tomar', ['mesa' => $mesaId]);
-}
+    {
+        // Solo abre el borrador para esa mesa (NO crea comanda)
+        return redirect()->route('comandas.tomar', ['mesa' => $mesaId]);
+    }
 };
 ?>
 
