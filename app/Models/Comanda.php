@@ -14,6 +14,11 @@ class Comanda extends Model
         'observaciones',
     ];
 
+    public function detalles()
+    {
+        return $this->hasMany(ComandaDetalle::class);
+    }
+
     public function mesa()
     {
         return $this->belongsTo(Mesa::class);

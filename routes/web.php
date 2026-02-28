@@ -10,3 +10,9 @@ Route::middleware('mesero.pin')->group(function () {
 
 });
 
+
+Route::livewire('/cocina', 'monitor-cocina')->name('cocina');
+Route::livewire('/pizzeria', 'monitor-pizzeria')->name('pizzeria');
+Route::livewire('/bebidas', 'monitor-bebidas')->name('bebidas');
+Route::livewire('/finalizadas', 'comandas-finalizadas')->name('finalizadas');
+

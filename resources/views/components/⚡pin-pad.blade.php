@@ -51,63 +51,98 @@ new class extends Component
 };
 ?>
 
-<div class="min-h-screen bg-slate-950 text-white flex items-center justify-center p-4">
-    <div class="w-full max-w-3xl bg-slate-900/60 border border-slate-800 rounded-2xl p-6 md:p-10 shadow-2xl">
-        <div class="flex items-center justify-between gap-4 mb-6">
-            <div>
-                <h1 class="text-2xl md:text-3xl font-bold">Ingresar PIN</h1>
-                <p class="text-slate-400 mt-1">Para habilitar la estación</p>
-            </div>
-            <button wire:click="clearPin"
-                class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] transition">
-                Limpiar
-            </button>
+<div class="min-h-screen bg-slate-950 text-white flex flex-col">
+
+    {{-- NAVBAR --}}
+    <nav style="background: #0d1117; border-bottom: 1px solid #1e2530;">
+        <div class="max-w-screen-xl mx-auto px-6 py-3 flex items-center gap-2">
+            <span class="text-xl mr-4" style="filter: drop-shadow(0 0 6px #f97316);">🔥</span>
+
+            <a href="{{ route('cocina') }}"
+               class="px-4 py-2 rounded-xl text-sm font-bold transition-all
+                      {{ request()->routeIs('cocina') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
+                🍳 Monitor · Cocina
+            </a>
+
+            <a href="{{ route('pizzeria') }}"
+               class="px-4 py-2 rounded-xl text-sm font-bold transition-all
+                      {{ request()->routeIs('pizzeria') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
+                🍕 Monitor · Pizzería
+            </a>
+
+            <a href="{{ route('bebidas') }}"
+               class="px-4 py-2 rounded-xl text-sm font-bold transition-all
+                      {{ request()->routeIs('bebidas') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
+                🥤 Monitor · Bebidas
+            </a>
+                   <a href="{{ route('finalizadas') }}"
+               class="px-4 py-2 rounded-xl text-sm font-bold transition-all
+                      {{ request()->routeIs('bebidas') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
+                 Finalizadas
+            </a>
         </div>
+    </nav>
 
-        {{-- Display de PIN (••••) --}}
-        <div class="flex justify-center mb-4">
-            <div class="flex gap-4">
-                @for ($i = 0; $i < 4; $i++)
-                    <div class="w-5 h-5 md:w-6 md:h-6 rounded-full border-2 border-slate-400
-                        {{ strlen($pin) > $i ? 'bg-white border-white' : '' }}">
-                    </div>
-                @endfor
+    {{-- CONTENIDO --}}
+    <div class="flex-1 flex items-center justify-center p-4">
+        <div class="w-full max-w-3xl bg-slate-900/60 border border-slate-800 rounded-2xl p-6 md:p-10 shadow-2xl">
+            <div class="flex items-center justify-between gap-4 mb-6">
+                <div>
+                    <h1 class="text-2xl md:text-3xl font-bold">Ingresar PIN</h1>
+                    <p class="text-slate-400 mt-1">Para habilitar la estación</p>
+                </div>
+                <button wire:click="clearPin"
+                    class="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] transition">
+                    Limpiar
+                </button>
             </div>
-        </div>
 
-        @if ($error)
-            <div class="text-center text-red-400 mb-4 font-semibold">{{ $error }}</div>
-        @else
-            <div class="text-center text-slate-500 mb-4">Ingresa 4 dígitos</div>
-        @endif
+            {{-- Display de PIN (••••) --}}
+            <div class="flex justify-center mb-4">
+                <div class="flex gap-4">
+                    @for ($i = 0; $i < 4; $i++)
+                        <div class="w-5 h-5 md:w-6 md:h-6 rounded-full border-2 border-slate-400
+                            {{ strlen($pin) > $i ? 'bg-white border-white' : '' }}">
+                        </div>
+                    @endfor
+                </div>
+            </div>
 
-        {{-- Keypad (optimizado para horizontal pero responde bien en vertical) --}}
-        <div class="grid grid-cols-3 gap-3 md:gap-4">
-            @foreach ([1,2,3,4,5,6,7,8,9] as $n)
-                <button wire:click="addDigit({{ $n }})"
+            @if ($error)
+                <div class="text-center text-red-400 mb-4 font-semibold">{{ $error }}</div>
+            @else
+                <div class="text-center text-slate-500 mb-4">Ingresa 4 dígitos</div>
+            @endif
+
+            {{-- Keypad --}}
+            <div class="grid grid-cols-3 gap-3 md:gap-4">
+                @foreach ([1,2,3,4,5,6,7,8,9] as $n)
+                    <button wire:click="addDigit({{ $n }})"
+                        class="py-5 md:py-7 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] transition
+                               text-2xl md:text-3xl font-bold">
+                        {{ $n }}
+                    </button>
+                @endforeach
+
+                <button wire:click="backspace"
+                    class="py-5 md:py-7 rounded-2xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.99] transition
+                           text-lg md:text-xl font-bold">
+                    Borrar
+                </button>
+
+                <button wire:click="addDigit(0)"
                     class="py-5 md:py-7 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] transition
                            text-2xl md:text-3xl font-bold">
-                    {{ $n }}
+                    0
                 </button>
-            @endforeach
 
-            <button wire:click="backspace"
-                class="py-5 md:py-7 rounded-2xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.99] transition
-                       text-lg md:text-xl font-bold">
-                Borrar
-            </button>
-
-            <button wire:click="addDigit(0)"
-                class="py-5 md:py-7 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] transition
-                       text-2xl md:text-3xl font-bold">
-                0
-            </button>
-
-            <button wire:click="validatePin"
-                class="py-5 md:py-7 rounded-2xl bg-emerald-600/90 hover:bg-emerald-600 active:scale-[0.99] transition
-                       text-lg md:text-xl font-bold">
-                Entrar
-            </button>
+                <button wire:click="validatePin"
+                    class="py-5 md:py-7 rounded-2xl bg-emerald-600/90 hover:bg-emerald-600 active:scale-[0.99] transition
+                           text-lg md:text-xl font-bold">
+                    Entrar
+                </button>
+            </div>
         </div>
     </div>
+
 </div>
