@@ -55,8 +55,15 @@ new class extends Component
 
     {{-- NAVBAR --}}
     <nav style="background: #0d1117; border-bottom: 1px solid #1e2530;">
-        <div class="max-w-screen-xl mx-auto px-6 py-3 flex items-center gap-2">
+        <div class="max-w-screen-xl mx-auto px-6 py-3 flex items-center gap-2 justify-center">
             <span class="text-xl mr-4" style="filter: drop-shadow(0 0 6px #f97316);">🔥</span>
+
+
+             <a href="{{ route('monitor.general') }}"
+               class="px-4 py-2 rounded-xl text-sm font-bold transition-all
+                      {{ request()->routeIs('monitor.general') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
+                 📊 Monitor · General
+            </a>
 
             <a href="{{ route('cocina') }}"
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
@@ -77,9 +84,16 @@ new class extends Component
             </a>
                    <a href="{{ route('finalizadas') }}"
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
-                      {{ request()->routeIs('bebidas') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
-                 Finalizadas
+                      {{ request()->routeIs('finalizadas') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
+
+
+                ⛬ Finalizadas
             </a>
+
+            <a href="{{ route('historico') }}"
+               class="px-4 py-2 rounded-xl text-sm font-bold transition-all
+                      {{ request()->routeIs('historico') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
+                  📄 Histórico de Pedidos
         </div>
     </nav>
 

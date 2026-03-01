@@ -15,4 +15,6 @@ Route::livewire('/cocina', 'monitor-cocina')->name('cocina');
 Route::livewire('/pizzeria', 'monitor-pizzeria')->name('pizzeria');
 Route::livewire('/bebidas', 'monitor-bebidas')->name('bebidas');
 Route::livewire('/finalizadas', 'comandas-finalizadas')->name('finalizadas');
+Route::livewire('/monitor-general', 'monitor-general')->name('monitor.general');
+Route::livewire('/historico', 'historico-pedidos')->name('historico');
 
