@@ -146,15 +146,7 @@ public function with(): array
                         <div class="text-sm font-black" style="color: #94a3b8;">
                             L <span style="color: #f1f5f9;">{{ number_format($comanda->total, 2) }}</span>
                         </div>
-                        <button
-                            type="button"
-                            wire:click="finalizarComanda({{ $comanda->id }})"
-                            wire:confirm="¿Marcar comanda como finalizada?"
-                            class="text-xs px-3 py-1.5 rounded-xl font-bold hover:opacity-80 transition-all"
-                            style="background: #22c55e22; border: 1px solid #22c55e44; color: #22c55e;"
-                        >
-                            ✓ Finalizar
-                        </button>
+                    
                     </div>
                 </div>
             @endforeach
