@@ -500,121 +500,118 @@ new class extends Component
         <aside class="hidden xl:block w-72 bg-slate-900/40 border-l border-slate-800 p-4 overflow-auto">
             <div class="font-bold text-lg mb-3">Orden</div>
 
-{{-- 1) YA ENVIADO (solo lectura) --}}
-@if($enviados->isNotEmpty())
-    <div class="mb-4">
-        <div class="text-xs text-slate-400 mb-2">Ya enviado</div>
+        {{-- 1) YA ENVIADO (solo lectura) --}}
+        @if($enviados->isNotEmpty())
+            <div class="mb-4">
+                <div class="text-xs text-slate-400 mb-2">Ya enviado</div>
 
-        <div class="space-y-2">
-            @foreach($enviados as $it)
-                <div class="bg-slate-950/30 border border-slate-800 rounded-xl p-3">
-                    <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
-
-                    @if(!empty($it['tamano']))
-                        <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
-                    @endif
-
-                    @if(!empty($it['notas']))
-                        <div class="text-xs text-slate-400 mt-1 line-clamp-2">
-                            📝 {{ $it['notas'] }}
-                        </div>
-                    @endif
-
-                    <div class="mt-2 flex items-center justify-between">
-                        <div class="text-slate-300 text-sm">x{{ $it['cantidad'] }}</div>
-                        <div class="font-black">L {{ number_format($it['subtotal'], 2) }}</div>
-                    </div>
-                </div>
-            @endforeach
-        </div>
-
-        <div class="mt-3 flex items-center justify-between text-sm">
-            <div class="text-slate-400">Subtotal enviado</div>
-            <div class="font-black">L {{ number_format($totalEnviado, 2) }}</div>
-        </div>
-    </div>
-@endif
-
-{{-- 2) NUEVO (BORRADOR) (editable) --}}
-<div class="mb-4">
-    <div class="text-xs text-slate-400 mb-2">Nuevo (borrador)</div>
-
-    @if($items->isEmpty())
-        <div class="text-slate-400 text-sm">Aún no agregas platillos nuevos.</div>
-    @else
-        <div class="space-y-2">
-            @foreach($items as $it)
-                <div class="flex items-center justify-between gap-3 bg-slate-950/40 border border-slate-800 rounded-xl p-3">
-                    {{-- Clickeable: abrir notas SOLO en borrador --}}
-                    <button
-                        type="button"
-                        wire:click="abrirNotas('{{ $it['key'] }}')"
-                        class="min-w-0 flex-1 text-left"
-                    >
-                        <div class="flex items-center gap-2">
+                <div class="space-y-2">
+                    @foreach($enviados as $it)
+                        <div class="bg-slate-950/30 border border-slate-800 rounded-xl p-3">
                             <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
 
-                            @if(!empty($it['notas']))
-                                <span class="text-[11px] px-2 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-200">
-                                    📝 Nota
-                                </span>
+                            @if(!empty($it['tamano']))
+                                <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
                             @endif
-                        </div>
 
-                        @if(!empty($it['tamano']))
-                            <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
-                        @endif
+                            @if(!empty($it['notas']))
+                                <div class="text-xs text-slate-400 mt-1 line-clamp-2">
+                                    📝 {{ $it['notas'] }}
+                                </div>
+                            @endif
 
-                        <div class="mt-1 flex items-center justify-between gap-2">
-                            <div class="text-slate-300 text-sm">
-                                L {{ number_format($it['precio_unitario'], 2) }} c/u
-                            </div>
-                            <div class="font-black text-slate-100">
-                                L {{ number_format($it['subtotal'], 2) }}
+                            <div class="mt-2 flex items-center justify-between">
+                                <div class="text-slate-300 text-sm">x{{ $it['cantidad'] }}</div>
+                                <div class="font-black">L {{ number_format($it['subtotal'], 2) }}</div>
                             </div>
                         </div>
-
-                        @if(!empty($it['notas']))
-                            <div class="text-xs text-slate-400 mt-1 line-clamp-1">
-                                {{ $it['notas'] }}
-                            </div>
-                        @endif
-                    </button>
-
-                    <div class="flex items-center gap-2">
-                        <div class="w-14 h-12 rounded-xl bg-slate-800 border border-slate-700
-                                    flex items-center justify-center font-black text-2xl">
-                            {{ $it['cantidad'] }}
-                        </div>
-
-                        {{-- X: resta 1 o elimina (solo borrador) --}}
-                        <button
-                            type="button"
-                            wire:click="quitar('{{ $it['key'] }}')"
-                            class="w-12 h-12 rounded-xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.98] transition font-black text-2xl"
-                            title="Quitar (resta 1 o elimina)"
-                        >
-                            ✕
-                        </button>
-                    </div>
+                    @endforeach
                 </div>
-            @endforeach
+
+                <div class="mt-3 flex items-center justify-between text-sm">
+                    <div class="text-slate-400">Subtotal enviado</div>
+                    <div class="font-black">L {{ number_format($totalEnviado, 2) }}</div>
+                </div>
+            </div>
+        @endif
+
+        {{-- 2) NUEVO (BORRADOR) (editable) --}}
+        <div class="mb-4">
+            <div class="text-xs text-slate-400 mb-2">Nuevo (borrador)</div>
+
+            @if($items->isEmpty())
+                <div class="text-slate-400 text-sm">Aún no agregas platillos nuevos.</div>
+            @else
+                <div class="space-y-2">
+                    @foreach($items as $it)
+                        <div class="flex items-center justify-between gap-3 bg-slate-950/40 border border-slate-800 rounded-xl p-3">
+                            {{-- Clickeable: abrir notas SOLO en borrador --}}
+                            <button
+                                type="button"
+                                wire:click="abrirNotas('{{ $it['key'] }}')"
+                                class="min-w-0 flex-1 text-left"
+                            >
+                                <div class="flex items-center gap-2">
+                                    <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
+
+                                    @if(!empty($it['notas']))
+                                        <span class="text-[11px] px-2 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-200">
+                                            📝 Nota
+                                        </span>
+                                    @endif
+                                </div>
+
+                                @if(!empty($it['tamano']))
+                                    <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
+                                @endif
+
+                                <div class="mt-1 flex items-center justify-between gap-2">
+                                    <div class="text-slate-300 text-sm">
+                                        L {{ number_format($it['precio_unitario'], 2) }} c/u
+                                    </div>
+                                    <div class="font-black text-slate-100">
+                                        L {{ number_format($it['subtotal'], 2) }}
+                                    </div>
+                                </div>
+
+                                @if(!empty($it['notas']))
+                                    <div class="text-xs text-slate-400 mt-1 line-clamp-1">
+                                        {{ $it['notas'] }}
+                                    </div>
+                                @endif
+                            </button>
+
+                            <div class="flex items-center gap-2">
+                                <div class="w-14 h-12 rounded-xl bg-slate-800 border border-slate-700
+                                            flex items-center justify-center font-black text-2xl">
+                                    {{ $it['cantidad'] }}
+                                </div>
+
+                                {{-- X: resta 1 o elimina (solo borrador) --}}
+                                <button
+                                    type="button"
+                                    wire:click="quitar('{{ $it['key'] }}')"
+                                    class="w-12 h-12 rounded-xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.98] transition font-black text-2xl"
+                                    title="Quitar (resta 1 o elimina)"
+                                >
+                                    ✕
+                                </button>
+                            </div>
+                        </div>
+                    @endforeach
+                </div>
+
+        
+            @endif
         </div>
 
-        <div class="mt-3 flex items-center justify-between text-sm">
-            <div class="text-slate-400">Subtotal borrador</div>
-            <div class="font-black">L {{ number_format($totalDraft, 2) }}</div>
+        {{-- 3) TOTAL GENERAL --}}
+        <div class="pt-4 border-t border-slate-800">
+            <div class="flex items-center justify-between">
+                <div class="text-slate-300 font-semibold">Total</div>
+                <div class="text-2xl font-black">L {{ number_format($totalGeneral, 2) }}</div>
+            </div>
         </div>
-    @endif
-</div>
-
-{{-- 3) TOTAL GENERAL --}}
-<div class="pt-4 border-t border-slate-800">
-    <div class="flex items-center justify-between">
-        <div class="text-slate-300 font-semibold">Total</div>
-        <div class="text-2xl font-black">L {{ number_format($totalGeneral, 2) }}</div>
-    </div>
-</div>
             @if(!$items->isEmpty())
                 <div class="mt-4 pt-4 border-t border-slate-800">
                     <div class="flex items-center justify-between">

@@ -47,7 +47,7 @@ new class extends Component
                 <div class="text-3xl" style="filter: drop-shadow(0 0 8px #f97316);">🔥</div>
                 <div>
                     <div class="text-xs tracking-widest uppercase" style="color: #f97316; letter-spacing: .2em;">Sistema de Cocina</div>
-                    <div class="font-black text-2xl tracking-tight" style="color: #f1f5f9;">MONITOR DE COMANDAS</div>
+                    <div class="font-black text-2xl tracking-tight" style="color: #f1f5f9;">MONITOR DE COMANDAS - BEBIDAS</div>
                 </div>
             </div>
 
