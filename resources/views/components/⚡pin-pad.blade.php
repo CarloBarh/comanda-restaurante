@@ -95,6 +95,7 @@ new class extends Component
                       {{ request()->routeIs('historico') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
                   📄 Histórico de Pedidos
             </a>      
+                   </a>
         </div>
     </nav>
 
