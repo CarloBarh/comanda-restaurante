@@ -94,6 +94,7 @@ new class extends Component
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
                       {{ request()->routeIs('historico') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
                   📄 Histórico de Pedidos
+                   </a>
         </div>
     </nav>
 
