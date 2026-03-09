@@ -62,39 +62,38 @@ new class extends Component
              <a href="{{ route('monitor.general') }}"
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
                       {{ request()->routeIs('monitor.general') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
-                 📊 Monitor · General
+                  Monitor · General
             </a>
 
             <a href="{{ route('cocina') }}"
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
                       {{ request()->routeIs('cocina') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
-                🍳 Monitor · Cocina
+                 Monitor · Cocina
             </a>
 
             <a href="{{ route('pizzeria') }}"
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
                       {{ request()->routeIs('pizzeria') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
-                🍕 Monitor · Pizzería
+                 Monitor · Pizzería
             </a>
 
             <a href="{{ route('bebidas') }}"
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
                       {{ request()->routeIs('bebidas') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
-                🥤 Monitor · Bebidas
+                 Monitor · Bebidas
             </a>
                    <a href="{{ route('finalizadas') }}"
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
                       {{ request()->routeIs('finalizadas') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
 
 
-                ⛬ Finalizadas
+                 Finalizadas
             </a>
 
             <a href="{{ route('historico') }}"
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
                       {{ request()->routeIs('historico') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
-                  📄 Histórico de Pedidos
-            </a>      
+                   Histórico de Pedidos
                    </a>
         </div>
     </nav>
