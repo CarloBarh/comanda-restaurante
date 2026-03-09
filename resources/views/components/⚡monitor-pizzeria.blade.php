@@ -26,11 +26,7 @@ public function with(): array
 
     return compact('comandas');
 }
-    public function finalizarComanda(int $comandaId): void
-    {
-        Comanda::whereKey($comandaId)->update(['estado' => 'finalizado']);
-        ComandaDetalle::where('comanda_id', $comandaId)->update(['estado' => 'listo']);
-    }
+   
 };
 ?>
 

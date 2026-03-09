@@ -37,7 +37,7 @@ new class extends Component
         if (!$this->comandaAFinalizar) return;
 
         $comanda = Comanda::findOrFail($this->comandaAFinalizar);
-        $comanda->update(['estado' => 'finalizado']);
+        $comanda->update(['estado' => 'cerrado']);
         ComandaDetalle::where('comanda_id', $this->comandaAFinalizar)->update(['estado' => 'listo']);
         Mesa::whereKey($comanda->mesa_id)->update(['estado' => 'libre']);
 
