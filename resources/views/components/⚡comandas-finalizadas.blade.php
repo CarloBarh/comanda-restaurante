@@ -21,7 +21,7 @@ new class extends Component
                 'detalles.platillo',
                 'detalles.tamano',
             ])
-            ->where('estado', 'finalizado')
+            ->where('estado', 'cerrado')
             ->whereDate('created_at', $this->fecha)
             ->orderByDesc('created_at')
             ->get();

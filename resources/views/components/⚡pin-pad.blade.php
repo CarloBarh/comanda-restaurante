@@ -103,7 +103,7 @@ new class extends Component
         <div class="w-full max-w-3xl bg-slate-900/60 border border-slate-800 rounded-2xl p-6 md:p-10 shadow-2xl">
             <div class="flex items-center justify-between gap-4 mb-6">
                 <div>
-                    <h1 class="text-2xl md:text-3xl font-bold">Ingresar PIN</h1>
+                    <h1 class="text-2xl md:text-3xl font-bold, font-family: 'Courier New', monospace;">Ingresar PIN</h1>
                     <p class="text-slate-400 mt-1">Para habilitar la estación</p>
                 </div>
                 <button wire:click="clearPin"
@@ -114,7 +114,7 @@ new class extends Component
 
             {{-- Display de PIN (••••) --}}
             <div class="flex justify-center mb-4">
-                <div class="flex gap-4">
+                <div class="flex gap-4 ">
                     @for ($i = 0; $i < 4; $i++)
                         <div class="w-5 h-5 md:w-6 md:h-6 rounded-full border-2 border-slate-400
                             {{ strlen($pin) > $i ? 'bg-white border-white' : '' }}">
@@ -134,7 +134,7 @@ new class extends Component
                 @foreach ([1,2,3,4,5,6,7,8,9] as $n)
                     <button wire:click="addDigit({{ $n }})"
                         class="py-5 md:py-7 rounded-2xl bg-slate-800 hover:bg-slate-700 active:scale-[0.99] transition
-                               text-2xl md:text-3xl font-bold">
+                               text-2xl md:text-3xl font-bold, font-family: 'Courier New', monospace;">
                         {{ $n }}
                     </button>
                 @endforeach

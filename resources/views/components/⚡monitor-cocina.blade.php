@@ -26,11 +26,7 @@ public function with(): array
 
     return compact('comandas');
 }
-    public function finalizarComanda(int $comandaId): void
-    {
-        Comanda::whereKey($comandaId)->update(['estado' => 'finalizado']);
-        ComandaDetalle::where('comanda_id', $comandaId)->update(['estado' => 'listo']);
-    }
+   
 };
 ?>
 
@@ -47,7 +43,7 @@ public function with(): array
                 <div class="text-3xl" style="filter: drop-shadow(0 0 8px #f97316);">🔥</div>
                 <div>
                     <div class="text-xs tracking-widest uppercase" style="color: #f97316; letter-spacing: .2em;">Sistema de Cocina</div>
-                    <div class="font-black text-2xl tracking-tight" style="color: #f1f5f9;">MONITOR DE COMANDAS</div>
+                    <div class="font-black text-2xl tracking-tight" style="color: #f1f5f9;">MONITOR DE COMANDAS - COCINA</div>
                 </div>
             </div>
 
