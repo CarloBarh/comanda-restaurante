@@ -7,8 +7,9 @@ use App\Models\Mesa;
 
 new class extends Component
 {
-    public bool $showConfirm = false;
-    public ?int $comandaAFinalizar = null;
+    public bool $showPago = false;
+    public ?int $comandaAPagar = null;
+    public string $tipoPago = '';
 
     public function with(): array
     {
@@ -26,29 +27,56 @@ new class extends Component
         return compact('comandas');
     }
 
-    public function pedirConfirmacion(int $comandaId): void
+    public function abrirModalPago(int $comandaId): void
     {
-        $this->comandaAFinalizar = $comandaId;
-        $this->showConfirm = true;
+        $this->comandaAPagar = $comandaId;
+        $this->tipoPago = '';
+        $this->showPago = true;
     }
 
-    public function confirmarFinalizar(): void
+    public function realizarPago(): void
     {
-        if (!$this->comandaAFinalizar) return;
+        if (!$this->comandaAPagar || !$this->tipoPago) return;
 
-        $comanda = Comanda::findOrFail($this->comandaAFinalizar);
-        $comanda->update(['estado' => 'cerrado']);
-        ComandaDetalle::where('comanda_id', $this->comandaAFinalizar)->update(['estado' => 'listo']);
+        $comanda = Comanda::with(['mesa', 'mesero', 'detalles.platillo', 'detalles.tamano'])
+            ->findOrFail($this->comandaAPagar);
+
+        $comanda->update([
+            'estado'    => 'cerrado',
+            'tipo_pago' => $this->tipoPago,
+        ]);
+        ComandaDetalle::where('comanda_id', $this->comandaAPagar)->update(['estado' => 'listo']);
         Mesa::whereKey($comanda->mesa_id)->update(['estado' => 'libre']);
 
-        $this->showConfirm = false;
-        $this->comandaAFinalizar = null;
+        $facturaData = json_encode([
+            'comanda_id' => $comanda->id,
+            'mesa'       => $comanda->mesa?->numero ?? '?',
+            'mesero'     => $comanda->mesero?->nombre ?? '—',
+            'tipo_pago'  => $this->tipoPago,
+            'fecha'      => now()->format('d/m/Y H:i'),
+            'total'      => (float) $comanda->total,
+            'detalles'   => $comanda->detalles->map(fn($d) => [
+                'cantidad' => $d->cantidad,
+                'platillo' => $d->platillo?->nombre ?? 'Platillo',
+                'tamano'   => $d->tamano?->nombre ?? '',
+                'notas'    => $d->notas ?? '',
+                'precio'   => (float) ($d->precio_unitario ?? 0),
+                'subtotal' => (float) (($d->precio_unitario ?? 0) * $d->cantidad),
+            ])->values()->toArray(),
+        ]);
+
+        $this->js("window.imprimirFactura($facturaData)");
+
+        $this->showPago = false;
+        $this->comandaAPagar = null;
+        $this->tipoPago = '';
     }
 
-    public function cancelarConfirmacion(): void
+    public function cancelarPago(): void
     {
-        $this->showConfirm = false;
-        $this->comandaAFinalizar = null;
+        $this->showPago = false;
+        $this->comandaAPagar = null;
+        $this->tipoPago = '';
     }
 };
 ?>
@@ -58,6 +86,254 @@ new class extends Component
     style="background: #080a0e; font-family: 'Courier New', monospace;"
     wire:poll.5s
 >
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script>
+window.imprimirFactura = function(data) {
+    var intentos = 0;
+    function intentar() {
+        if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
+            if (++intentos < 20) setTimeout(intentar, 300);
+            return;
+        }
+        construirPDF(data);
+    }
+    intentar();
+};
+
+function construirPDF(data) {
+    var jsPDF = window.jspdf.jsPDF;
+
+    // Calculamos primero cuántas líneas de ítems hay para dimensionar la página
+    var itemLines = 0;
+    (data.detalles || []).forEach(function(d) {
+        itemLines += 1;
+        if (d.tamano) itemLines += 0.75;
+        if (d.notas)  itemLines += 0.75;
+    });
+
+    // Altura estimada: cabecera fija ~130mm + ítems + pie fijo ~60mm
+    var altoPagina = 140 + (itemLines * 4.5) + 65;
+    if (altoPagina < 200) altoPagina = 200;
+
+    var doc = new jsPDF({ unit: 'mm', format: [80, altoPagina], orientation: 'portrait' });
+
+    var W     = 80;
+    var y     = 6;
+    var green = [0, 120, 60];
+    var black = [20, 20, 20];
+    var gray  = [110, 110, 110];
+
+    function setGreen()  { doc.setTextColor(green[0], green[1], green[2]); }
+    function setBlack()  { doc.setTextColor(black[0], black[1], black[2]); }
+    function setGray()   { doc.setTextColor(gray[0],  gray[1],  gray[2]);  }
+    function fillGreen() { doc.setFillColor(green[0], green[1], green[2]); }
+
+    // ── ENCABEZADO ────────────────────────────────────────────────
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(7.5);
+    setGreen();
+    doc.text('RESTAURANTE Y PIZZERIA', W / 2, y, { align: 'center' });
+    y += 5;
+
+    doc.setFontSize(11);
+    doc.text('MI PEQUE\u00d1O JARDIN', W / 2, y, { align: 'center' });
+    y += 5.5;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    setGray();
+    var headerLines = [
+        'Prop. Carmen Marisela Hernandez T.',
+        'SUCURSAL: Residencial San Isidro, El Paraiso',
+        'R.T.N. 0704198900271   Tel: 2793-6471 / 9359-6424',
+        'E-mail: picolino5289@gmail.com',
+    ];
+    headerLines.forEach(function(l) {
+        doc.text(l, W / 2, y, { align: 'center' });
+        y += 4;
+    });
+    y += 1;
+
+    // CAI (banda verde)
+    fillGreen();
+    doc.roundedRect(3, y, W - 6, 6, 1, 1, 'F');
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(5.8);
+    doc.setTextColor(255, 255, 255);
+    doc.text('CAI: 47E269-41C2F2-514DE0-63BE03-090945-33', W / 2, y + 3.8, { align: 'center' });
+    y += 9;
+
+    // ── FECHA ─────────────────────────────────────────────────────
+    var meses = ['','enero','febrero','marzo','abril','mayo','junio',
+                 'julio','agosto','septiembre','octubre','noviembre','diciembre'];
+    var fp    = data.fecha.split(' ')[0].split('/');
+    var dd = fp[0], mesIdx = parseInt(fp[1]), aaaa = fp[2];
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    setBlack();
+    doc.text('Fecha:  ' + dd + '  de  ' + meses[mesIdx] + '  del  ' + aaaa, W / 2, y, { align: 'center' });
+    y += 7;
+
+    // ── BADGE helper ─────────────────────────────────────────────
+    function badge(label, x, yy, ancho) {
+        fillGreen();
+        doc.roundedRect(x, yy - 4, ancho, 5.5, 1, 1, 'F');
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(6.5);
+        doc.setTextColor(255, 255, 255);
+        doc.text(label, x + 2, yy);
+    }
+
+    // Cliente
+    badge('Cliente:', 3, y, 18);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    setBlack();
+    doc.text('Mesa ' + data.mesa + '  \u00b7  ' + data.mesero, 23, y);
+    y += 7;
+
+    // Tipo de pago
+    badge('Tipo de pago:', 3, y, 26);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    setBlack();
+    doc.text(data.tipo_pago.charAt(0).toUpperCase() + data.tipo_pago.slice(1), 31, y);
+    y += 7;
+
+    // ── SEPARADOR ────────────────────────────────────────────────
+    doc.setDrawColor(green[0], green[1], green[2]);
+    doc.setLineWidth(0.4);
+    doc.line(3, y, W - 3, y);
+    y += 5;
+
+    // ── CABECERA TABLA ────────────────────────────────────────────
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6.5);
+    setGreen();
+    doc.text('CANT.',        5,  y);
+    doc.text('DESCRIPCI\u00d3N', 17, y);
+    doc.text('P/U',         52, y, { align: 'right' });
+    doc.text('TOTAL',       74, y, { align: 'right' });
+    y += 2.5;
+    doc.line(3, y, W - 3, y);
+    y += 5;
+
+    // ── ITEMS ─────────────────────────────────────────────────────
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    setBlack();
+
+    var acum = 0;
+    (data.detalles || []).forEach(function(d) {
+        var nombre   = d.platillo.length > 22 ? d.platillo.substring(0, 22) + '...' : d.platillo;
+        var precio   = parseFloat(d.precio)   || 0;
+        var subtotal = parseFloat(d.subtotal) || (precio * d.cantidad);
+        acum += subtotal;
+
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        setBlack();
+        doc.text(d.cantidad + 'x', 10, y, { align: 'right' });
+        doc.text(nombre, 17, y);
+        doc.text(precio > 0 ? precio.toFixed(2) : '-', 52, y, { align: 'right' });
+        doc.text(subtotal.toFixed(2), 74, y, { align: 'right' });
+        y += 5;
+
+        if (d.tamano) {
+            doc.setFontSize(5.5); setGray();
+            doc.text('  Tama\u00f1o: ' + d.tamano, 17, y);
+            y += 4;
+        }
+        if (d.notas) {
+            doc.setFontSize(5.5); setGray();
+            doc.text('  Nota: ' + d.notas, 17, y);
+            y += 4;
+        }
+    });
+
+    // ── TOTALES ───────────────────────────────────────────────────
+    y += 2;
+    doc.setDrawColor(green[0], green[1], green[2]);
+    doc.setLineWidth(0.4);
+    doc.line(3, y, W - 3, y);
+    y += 5;
+
+    var total       = parseFloat(data.total) || acum;
+    var baseGravada = total / 1.15;
+    var isv15       = total - baseGravada;
+
+    // Filas de totales
+    var totalRows = [
+        { label: 'Importe Exonerado L.',   val: '0.00',                  bold: false },
+        { label: 'Importe Exento L.',       val: '0.00',                  bold: false },
+        { label: 'Importe Gravado 15% L.',  val: baseGravada.toFixed(2),  bold: false },
+        { label: 'ISV 15% L.',              val: isv15.toFixed(2),        bold: false },
+        { label: 'TOTAL A PAGAR L.',        val: total.toFixed(2),        bold: true  },
+    ];
+
+    totalRows.forEach(function(row) {
+        doc.setFont('helvetica', row.bold ? 'bold' : 'normal');
+        doc.setFontSize(row.bold ? 7.5 : 6.5);
+        if (row.bold) { setGreen(); } else { setBlack(); }
+        doc.text(row.label,  5,  y);
+        doc.text(row.val,   74, y, { align: 'right' });
+        y += row.bold ? 6 : 5;
+    });
+
+    // ── NÚMERO DE FACTURA ─────────────────────────────────────────
+    y += 3;
+    badge('FACTURA', 3, y, 18);
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    setBlack();
+    doc.text('Contado', 23, y);
+    doc.rect(33, y - 3.5, 3.5, 3.5);
+    doc.text('Cr\u00e9dito', 39, y);
+    doc.rect(49, y - 3.5, 3.5, 3.5);
+
+    if (data.tipo_pago === 'efectivo') {
+        fillGreen(); doc.rect(33.4, y - 3.1, 2.7, 2.7, 'F');
+    } else {
+        fillGreen(); doc.rect(49.4, y - 3.1, 2.7, 2.7, 'F');
+    }
+    y += 6;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6.5);
+    setBlack();
+    var numF = String(data.comanda_id); while (numF.length < 5) numF = '0' + numF;
+    doc.text('002-001-01-000  No  ' + numF, 5, y);
+    y += 9;
+
+    // ── RANGO AUTORIZADO ──────────────────────────────────────────
+    doc.setDrawColor(green[0], green[1], green[2]);
+    doc.setLineWidth(0.3);
+    doc.line(3, y, W - 3, y);
+    y += 4;
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(5.5);
+    setGray();
+    doc.text('Rango Autorizado: 002-001-01-00003001 / 002-001-01-00003600', W / 2, y, { align: 'center' });
+    y += 4;
+    doc.text('Fecha l\u00edmite de Emisi\u00f3n: 08/01/2027', W / 2, y, { align: 'center' });
+    y += 6;
+
+    // ── PIE ───────────────────────────────────────────────────────
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(6);
+    setGreen();
+    doc.text('LA FACTURA ES BENEFICIO DE TODOS "EX\u00cdJALA"', W / 2, y, { align: 'center' });
+    y += 6;
+    doc.setFont('helvetica', 'bolditalic');
+    doc.setFontSize(9);
+    doc.text('Gracias Por Su Preferencia', W / 2, y, { align: 'center' });
+
+    doc.save('factura-mesa' + data.mesa + '-' + Date.now() + '.pdf');
+}
+</script>
 
     {{-- HEADER --}}
     <header style="background: #0d1117; border-bottom: 1px solid #1e2530;">
@@ -176,67 +452,87 @@ new class extends Component
                         </div>
                         <button
                             type="button"
-                            wire:click="pedirConfirmacion({{ $comanda->id }})"
+                            wire:click="abrirModalPago({{ $comanda->id }})"
                             class="text-xs px-3 py-1.5 rounded-xl font-bold hover:opacity-80 transition-all"
-                            style="background: #22c55e22; border: 1px solid #22c55e44; color: #22c55e;"
+                            style="background: #eab30822; border: 1px solid #eab30844; color: #eab308;"
                         >
-                            ✓ Finalizar
+                            💳 Pagar
                         </button>
                     </div>
                 </div>
             @endforeach
         </div>
-
         @endif
     </main>
 
-    {{-- MODAL DE CONFIRMACIÓN --}}
-    @if($showConfirm)
+    {{-- MODAL DE PAGO --}}
+    @if($showPago)
     <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="absolute inset-0" style="background: rgba(0,0,0,0.82);"
+             wire:click="cancelarPago"></div>
 
-        {{-- Fondo --}}
-        <div class="absolute inset-0" style="background: rgba(0,0,0,0.75);"
-             wire:click="cancelarConfirmacion"></div>
-
-        {{-- Modal --}}
         <div class="relative w-full max-w-sm rounded-2xl p-6 flex flex-col gap-5"
-             style="background: #0d1117; border: 1.5px solid #22c55e44; box-shadow: 0 0 60px #22c55e11, 0 24px 48px rgba(0,0,0,0.5);">
+             style="background: #0d1117; border: 1.5px solid #eab30844; box-shadow: 0 0 60px #eab30811, 0 24px 48px rgba(0,0,0,0.5);">
 
-            {{-- Ícono --}}
             <div class="flex items-center justify-center">
                 <div class="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
-                     style="background: #22c55e22; border: 1.5px solid #22c55e44;">
-                    ✓
+                     style="background: #eab30822; border: 1.5px solid #eab30844;">
+                    💳
                 </div>
             </div>
 
-            {{-- Texto --}}
             <div class="text-center">
-                <div class="font-black text-lg" style="color: #f1f5f9;">¿Finalizar comanda?</div>
-                <div class="text-sm mt-2 leading-relaxed" style="color: #475569;">
-                    La mesa quedará marcada como
-                    <span style="color: #22c55e; font-weight: 700;">libre</span>
-                    y la comanda pasará a finalizadas.
-                </div>
+                <div class="font-black text-lg" style="color: #f1f5f9;">Seleccionar tipo de pago</div>
+                <div class="text-sm mt-1" style="color: #475569;">Elige cómo se realizará el cobro</div>
             </div>
 
-            {{-- Botones --}}
-            <div class="flex gap-3">
+            <div class="flex flex-col gap-3">
+                @foreach([
+                    ['value' => 'efectivo',      'label' => 'Efectivo',      'icon' => '💵', 'color' => '#22c55e'],
+                    ['value' => 'transferencia', 'label' => 'Transferencia', 'icon' => '🏦', 'color' => '#3b82f6'],
+                    ['value' => 'tarjeta',       'label' => 'Tarjeta',       'icon' => '💳', 'color' => '#a855f7'],
+                ] as $opcion)
+                    <button
+                        type="button"
+                        wire:click="$set('tipoPago', '{{ $opcion['value'] }}')"
+                        class="flex items-center gap-4 px-4 py-3 rounded-xl font-bold text-sm transition-all"
+                        style="
+                            background: {{ $tipoPago === $opcion['value'] ? $opcion['color'].'33' : '#1e2530' }};
+                            border: 1.5px solid {{ $tipoPago === $opcion['value'] ? $opcion['color'].'88' : '#2a3441' }};
+                            color: {{ $tipoPago === $opcion['value'] ? $opcion['color'] : '#94a3b8' }};
+                        "
+                    >
+                        <span class="text-xl">{{ $opcion['icon'] }}</span>
+                        <span>{{ $opcion['label'] }}</span>
+                        @if($tipoPago === $opcion['value'])
+                            <span class="ml-auto">✓</span>
+                        @endif
+                    </button>
+                @endforeach
+            </div>
+
+            <div class="flex gap-3 mt-1">
                 <button
                     type="button"
-                    wire:click="cancelarConfirmacion"
-                    class="flex-1 py-3 rounded-xl font-bold text-sm transition-all hover:opacity-80"
+                    wire:click="cancelarPago"
+                    class="flex-1 py-3 rounded-xl font-bold text-sm hover:opacity-80 transition-all"
                     style="background: #1e2530; color: #94a3b8; border: 1.5px solid #2a3441;"
                 >
                     Cancelar
                 </button>
                 <button
                     type="button"
-                    wire:click="confirmarFinalizar"
-                    class="flex-1 py-3 rounded-xl font-bold text-sm transition-all hover:opacity-80"
-                    style="background: #22c55e22; color: #22c55e; border: 1.5px solid #22c55e44;"
+                    wire:click="realizarPago"
+                    @if(!$tipoPago) disabled @endif
+                    class="flex-1 py-3 rounded-xl font-bold text-sm transition-all"
+                    style="
+                        background: {{ $tipoPago ? '#eab30822' : '#1e2530' }};
+                        color: {{ $tipoPago ? '#eab308' : '#475569' }};
+                        border: 1.5px solid {{ $tipoPago ? '#eab30844' : '#2a3441' }};
+                        {{ !$tipoPago ? 'opacity:.45; cursor:not-allowed;' : '' }}
+                    "
                 >
-                    ✓ Sí, finalizar
+                    💰 Realizar pago
                 </button>
             </div>
         </div>
