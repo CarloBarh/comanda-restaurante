@@ -1,9 +1,12 @@
 <?php
 
 use Livewire\Component;
+use Illuminate\Support\Facades\DB;
 use App\Models\Comanda;
 use App\Models\ComandaDetalle;
 use App\Models\Mesa;
+use App\Models\Factura;
+use App\Models\FacturaDetalle;
 
 new class extends Component
 {
@@ -41,31 +44,87 @@ new class extends Component
         $comanda = Comanda::with(['mesa', 'mesero', 'detalles.platillo', 'detalles.tamano'])
             ->findOrFail($this->comandaAPagar);
 
-        $comanda->update([
-            'estado'    => 'cerrado',
-            'tipo_pago' => $this->tipoPago,
-        ]);
-        ComandaDetalle::where('comanda_id', $this->comandaAPagar)->update(['estado' => 'listo']);
-        Mesa::whereKey($comanda->mesa_id)->update(['estado' => 'libre']);
+        // ── Calcular totales fiscales ───────────────────────────────────────
+        $total       = (float) $comanda->total;
+        $baseGravada = round($total / 1.15, 2);
+        $isv15       = round($total - $baseGravada, 2);
 
-        $facturaData = json_encode([
-            'comanda_id' => $comanda->id,
-            'mesa'       => $comanda->mesa?->numero ?? '?',
-            'mesero'     => $comanda->mesero?->nombre ?? '—',
-            'tipo_pago'  => $this->tipoPago,
-            'fecha'      => now()->format('d/m/Y H:i'),
-            'total'      => (float) $comanda->total,
-            'detalles'   => $comanda->detalles->map(fn($d) => [
-                'cantidad' => $d->cantidad,
-                'platillo' => $d->platillo?->nombre ?? 'Platillo',
-                'tamano'   => $d->tamano?->nombre ?? '',
-                'notas'    => $d->notas ?? '',
-                'precio'   => (float) ($d->precio_unitario ?? 0),
-                'subtotal' => (float) (($d->precio_unitario ?? 0) * $d->cantidad),
-            ])->values()->toArray(),
-        ]);
+        DB::transaction(function () use ($comanda, $total, $baseGravada, $isv15) {
 
-        $this->js("window.imprimirFactura($facturaData)");
+            // 1) Crear registro en facturas
+            $factura = Factura::create([
+                'comanda_id'          => $comanda->id,
+                'mesa_id'             => $comanda->mesa_id,
+                'mesero_id'           => $comanda->mesero_id,
+                'tipo_pago'           => $this->tipoPago,
+                'total'               => $total,
+                'base_gravada'        => $baseGravada,
+                'isv_15'              => $isv15,
+                'importe_exento'      => 0,
+                'importe_exonerado'   => 0,
+                'numero_factura'      => null, // se genera tras conocer el id
+            ]);
+
+            // Actualizar número correlativo ahora que tenemos el id
+            $factura->update([
+                'numero_factura' => $factura->generarNumero(),
+            ]);
+
+            // 2) Insertar detalles de factura (snapshot)
+            foreach ($comanda->detalles as $detalle) {
+                FacturaDetalle::create([
+                    'factura_id'      => $factura->id,
+                    'platillo_id'     => $detalle->platillo_id,
+                    'tamano_id'       => $detalle->tamano_id,
+                    'platillo_nombre' => $detalle->platillo?->nombre ?? 'Platillo',
+                    'tamano_nombre'   => $detalle->tamano?->nombre,
+                    'cantidad'        => (int) $detalle->cantidad,
+                    'precio_unitario' => (float) $detalle->precio_unitario,
+                    'subtotal'        => (float) $detalle->subtotal,
+                    'notas'           => $detalle->notas,
+                    'descuento'       => (int) ($detalle->descuento ?? 0),
+                    'monto_descuento' => (float) ($detalle->monto_descuento ?? 0),
+                ]);
+            }
+
+            // 3) Cerrar comanda y mesa
+            $comanda->update([
+                'estado'    => 'cerrado',
+                'tipo_pago' => $this->tipoPago,
+            ]);
+
+            ComandaDetalle::where('comanda_id', $comanda->id)
+                ->update(['estado' => 'listo']);
+
+            Mesa::whereKey($comanda->mesa_id)
+                ->update(['estado' => 'libre']);
+
+            // 4) Enviar datos al JS para imprimir el PDF
+            $facturaData = json_encode([
+                'comanda_id'     => $comanda->id,
+                'factura_id'     => $factura->id,
+                'numero_factura' => $factura->numero_factura,
+                'mesa'           => $comanda->mesa?->numero ?? '?',
+                'mesero'         => $comanda->mesero?->nombre ?? '—',
+                'tipo_pago'      => $this->tipoPago,
+                'fecha'          => now()->format('d/m/Y H:i'),
+                'total'          => $total,
+                'base_gravada'   => $baseGravada,
+                'isv_15'         => $isv15,
+                'detalles'       => $comanda->detalles->map(fn($d) => [
+                    'cantidad'  => $d->cantidad,
+                    'platillo'  => $d->platillo?->nombre ?? 'Platillo',
+                    'tamano'    => $d->tamano?->nombre ?? '',
+                    'notas'     => $d->notas ?? '',
+                    'precio'           => (float) ($d->precio_unitario ?? 0),
+                    'descuento'        => (int) ($d->descuento ?? 0),
+                    'monto_descuento'  => (float) ($d->monto_descuento ?? 0),
+                    'subtotal'         => (float) $d->subtotal,
+                ])->values()->toArray(),
+            ]);
+
+            $this->js("window.imprimirFactura($facturaData)");
+        });
 
         $this->showPago = false;
         $this->comandaAPagar = null;
@@ -104,17 +163,20 @@ window.imprimirFactura = function(data) {
 function construirPDF(data) {
     var jsPDF = window.jspdf.jsPDF;
 
-    // Calculamos primero cuántas líneas de ítems hay para dimensionar la página
     var itemLines = 0;
     (data.detalles || []).forEach(function(d) {
         itemLines += 1;
-        if (d.tamano) itemLines += 0.75;
-        if (d.notas)  itemLines += 0.75;
+        if (d.tamano)    itemLines += 0.75;
+        if (d.descuento) itemLines += 0.75;
+        if (d.notas)     itemLines += 0.75;
     });
 
-    // Altura estimada: cabecera fija ~130mm + ítems + pie fijo ~60mm
     var altoPagina = 140 + (itemLines * 4.5) + 65;
     if (altoPagina < 200) altoPagina = 200;
+
+    // Si hay descuentos, agregar espacio para la fila extra en totales
+    var hayDescuentos = (data.detalles || []).some(function(d) { return d.descuento > 0; });
+    if (hayDescuentos) altoPagina += 6;
 
     var doc = new jsPDF({ unit: 'mm', format: [80, altoPagina], orientation: 'portrait' });
 
@@ -229,7 +291,7 @@ function construirPDF(data) {
     (data.detalles || []).forEach(function(d) {
         var nombre   = d.platillo.length > 22 ? d.platillo.substring(0, 22) + '...' : d.platillo;
         var precio   = parseFloat(d.precio)   || 0;
-        var subtotal = parseFloat(d.subtotal) || (precio * d.cantidad);
+        var subtotal = parseFloat(d.subtotal) || 0;
         acum += subtotal;
 
         doc.setFont('helvetica', 'normal');
@@ -246,6 +308,13 @@ function construirPDF(data) {
             doc.text('  Tama\u00f1o: ' + d.tamano, 17, y);
             y += 4;
         }
+        if (d.descuento) {
+            doc.setFontSize(5.5);
+            doc.setTextColor(180, 40, 40);
+            doc.text('  Descuento: ' + d.descuento + '% (-L ' + (parseFloat(d.monto_descuento) || 0).toFixed(2) + ')', 17, y);
+            setBlack();
+            y += 4;
+        }
         if (d.notas) {
             doc.setFontSize(5.5); setGray();
             doc.text('  Nota: ' + d.notas, 17, y);
@@ -260,23 +329,36 @@ function construirPDF(data) {
     doc.line(3, y, W - 3, y);
     y += 5;
 
-    var total       = parseFloat(data.total) || acum;
-    var baseGravada = total / 1.15;
-    var isv15       = total - baseGravada;
+    var total       = parseFloat(data.total)       || acum;
+    var baseGravada = parseFloat(data.base_gravada) || (total / 1.15);
+    var isv15       = parseFloat(data.isv_15)       || (total - baseGravada);
 
-    // Filas de totales
+    // Sumar total descontado de todos los ítems
+    var totalDescuento = 0;
+    (data.detalles || []).forEach(function(d) {
+        totalDescuento += parseFloat(d.monto_descuento) || 0;
+    });
+    totalDescuento = Math.round(totalDescuento * 100) / 100;
+
     var totalRows = [
-        { label: 'Importe Exonerado L.',   val: '0.00',                  bold: false },
-        { label: 'Importe Exento L.',       val: '0.00',                  bold: false },
-        { label: 'Importe Gravado 15% L.',  val: baseGravada.toFixed(2),  bold: false },
-        { label: 'ISV 15% L.',              val: isv15.toFixed(2),        bold: false },
-        { label: 'TOTAL A PAGAR L.',        val: total.toFixed(2),        bold: true  },
+        { label: 'Importe Exonerado L.',   val: '0.00',                  bold: false, color: 'black' },
+        { label: 'Importe Exento L.',       val: '0.00',                  bold: false, color: 'black' },
+        { label: 'Importe Gravado 15% L.',  val: baseGravada.toFixed(2),  bold: false, color: 'black' },
+        { label: 'ISV 15% L.',              val: isv15.toFixed(2),        bold: false, color: 'black' },
     ];
+
+    if (totalDescuento > 0) {
+        totalRows.push({ label: 'Total Descuentos L.', val: '-' + totalDescuento.toFixed(2), bold: false, color: 'red' });
+    }
+
+    totalRows.push({ label: 'TOTAL A PAGAR L.', val: total.toFixed(2), bold: true, color: 'green' });
 
     totalRows.forEach(function(row) {
         doc.setFont('helvetica', row.bold ? 'bold' : 'normal');
         doc.setFontSize(row.bold ? 7.5 : 6.5);
-        if (row.bold) { setGreen(); } else { setBlack(); }
+        if (row.color === 'green')      { setGreen(); }
+        else if (row.color === 'red')   { doc.setTextColor(180, 40, 40); }
+        else                            { setBlack(); }
         doc.text(row.label,  5,  y);
         doc.text(row.val,   74, y, { align: 'right' });
         y += row.bold ? 6 : 5;
@@ -303,8 +385,9 @@ function construirPDF(data) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6.5);
     setBlack();
-    var numF = String(data.comanda_id); while (numF.length < 5) numF = '0' + numF;
-    doc.text('002-001-01-000  No  ' + numF, 5, y);
+    // Usar numero_factura de la BD si está disponible, sino generar correlativo
+    var numFactura = data.numero_factura || ('002-001-01-' + String(data.factura_id || data.comanda_id).padStart(8, '0'));
+    doc.text(numFactura, 5, y);
     y += 9;
 
     // ── RANGO AUTORIZADO ──────────────────────────────────────────
@@ -331,7 +414,7 @@ function construirPDF(data) {
     doc.setFontSize(9);
     doc.text('Gracias Por Su Preferencia', W / 2, y, { align: 'center' });
 
-    doc.save('factura-mesa' + data.mesa + '-' + Date.now() + '.pdf');
+    doc.save('factura-' + (data.numero_factura || data.factura_id) + '.pdf');
 }
 </script>
 
@@ -434,6 +517,19 @@ function construirPDF(data) {
                                     </div>
                                     @if($detalle->tamano)
                                         <div class="text-xs" style="color: #64748b;">{{ $detalle->tamano->nombre }}</div>
+                                    @endif
+                                    <div class="flex items-center justify-between mt-0.5">
+                                        <div class="text-xs" style="color: #475569;">
+                                            {{ $detalle->cantidad }}× L {{ number_format($detalle->precio_unitario, 2) }}
+                                        </div>
+                                        <div class="text-xs font-bold" style="color: #94a3b8;">
+                                            L {{ number_format($detalle->subtotal, 2) }}
+                                        </div>
+                                    </div>
+                                    @if($detalle->descuento > 0)
+                                        <div class="text-xs font-bold mt-0.5" style="color: #f87171;">
+                                            🏷️ −{{ $detalle->descuento }}% (−L {{ number_format($detalle->monto_descuento, 2) }})
+                                        </div>
                                     @endif
                                     @if($detalle->notas)
                                         <div class="text-xs italic mt-0.5 px-1.5 py-0.5 rounded"
