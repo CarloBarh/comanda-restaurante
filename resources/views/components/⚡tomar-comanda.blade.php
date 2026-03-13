@@ -36,14 +36,7 @@ new class extends Component
         $first = \App\Models\Categoria::query()->orderBy('nombre')->first();
         $this->categoriaId = $first?->id;
 
-        if ($this->categoriaId) {
-            $firstSub = \App\Models\Subcategoria::query()
-                ->where('categoria_id', $this->categoriaId)
-                ->orderBy('nombre')
-                ->first();
-
-            $this->subcategoriaId = $firstSub?->id;
-        }
+        $this->subcategoriaId = null;
     }
 
     protected function draftKey(): string
@@ -119,7 +112,7 @@ new class extends Component
 
         $platillos = Platillo::query()
             ->when($this->categoriaId, fn($q) => $q->where('categoria_id', $this->categoriaId))
-            ->when($subcategorias->isNotEmpty() && $this->subcategoriaId, fn($q) => $q->where('subcategoria_id', $this->subcategoriaId))
+            ->when($this->subcategoriaId, fn($q) => $q->where('subcategoria_id', $this->subcategoriaId))
             ->when($this->busqueda !== '', fn($q) => $q->where('nombre', 'like', '%'.$this->busqueda.'%'))
             ->orderBy('nombre')
             ->get();
@@ -178,13 +171,7 @@ new class extends Component
     {
         $this->categoriaId = $categoriaId;
         $this->busqueda = '';
-
-        $firstSub = \App\Models\Subcategoria::query()
-            ->where('categoria_id', $this->categoriaId)
-            ->orderBy('nombre')
-            ->first();
-
-        $this->subcategoriaId = $firstSub?->id;
+        $this->subcategoriaId = null;
     }
 
     public function seleccionarSubcategoria(?int $subcategoriaId): void
@@ -530,6 +517,18 @@ new class extends Component
 
             @if($subcategorias->isNotEmpty())
                 <div class="mb-4 flex flex-wrap gap-2">
+                    <button
+                        type="button"
+                        wire:click="seleccionarSubcategoria(null)"
+                        class="px-4 py-2 rounded-xl border text-sm font-semibold transition
+                            {{ $subcategoriaId === null
+                                ? 'bg-slate-800 border-slate-700 text-white'
+                                : 'bg-slate-950/30 border-slate-800 text-slate-300 hover:bg-slate-900/50'
+                            }}"
+                    >
+                        Todos
+                    </button>
+
                     @foreach($subcategorias as $sub)
                         <button
                             type="button"
