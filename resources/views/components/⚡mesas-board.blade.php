@@ -31,6 +31,11 @@ new class extends Component
                 <h1 class="text-2xl md:text-3xl font-bold">Croquis de Mesas</h1>
                 <p class="text-slate-400 mt-1">Toca una mesa para tomar / ver una comanda</p>
             </div>
+                <a href="{{ route('pin') }}"
+               class="px-4 py-2 rounded-xl text-sm font-bold transition-all text-slate-400 hover:text-white hover:bg-slate-800">
+                📲 Volver a PIN
+            </a>
+
 
             <div class="flex items-center gap-3 text-sm">
                 <div class="flex items-center gap-2">
