@@ -17,4 +17,6 @@ Route::livewire('/bebidas', 'monitor-bebidas')->name('bebidas');
 Route::livewire('/finalizadas', 'comandas-finalizadas')->name('finalizadas');
 Route::livewire('/monitor-general', 'monitor-general')->name('monitor.general');
 Route::livewire('/historico', 'historico-pedidos')->name('historico');
+Route::livewire('/facturas','facturas')->name('facturas');
+Route::livewire('/facturas/{factura}', 'factura-detalles')->name('facturas.detalle');
 

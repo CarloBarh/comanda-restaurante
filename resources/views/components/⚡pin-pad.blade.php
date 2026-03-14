@@ -56,7 +56,7 @@ new class extends Component
     {{-- NAVBAR --}}
     <nav style="background: #0d1117; border-bottom: 1px solid #1e2530;">
         <div class="max-w-screen-xl mx-auto px-6 py-3 flex items-center gap-2 justify-center">
-            <span class="text-xl mr-4" style="filter: drop-shadow(0 0 6px #f97316);">🔥</span>
+         
 
 
              <a href="{{ route('monitor.general') }}"
@@ -94,6 +94,12 @@ new class extends Component
                class="px-4 py-2 rounded-xl text-sm font-bold transition-all
                       {{ request()->routeIs('historico') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
                    Histórico de Pedidos
+                   </a>
+
+                       <a href="{{ route('facturas') }}"
+               class="px-4 py-2 rounded-xl text-sm font-bold transition-all
+                      {{ request()->routeIs('facturas') ? 'bg-slate-700 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800' }}">
+                   Facturas
                    </a>
         </div>
     </nav>

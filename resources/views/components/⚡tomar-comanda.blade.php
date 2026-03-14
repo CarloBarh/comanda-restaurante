@@ -24,6 +24,17 @@ new class extends Component
     public ?int $comandaId = null; // si la mesa ya tiene una comanda en_proceso
     public ?int $subcategoriaId = null;
 
+    // ── Modal de acción (Nota | Descuento) ──────────────────────────────────
+    public bool $showAccionModal = false;
+    public ?string $accionKey = null;
+    public string $accionNombre = '';
+
+    // ── Modal de descuento ───────────────────────────────────────────────────
+    public bool $showDescuentoModal = false;
+    public ?string $descuentoKey = null;
+    public string $descuentoTexto = '';   // string para el input; se valida como entero
+    public string $descuentoNombre = '';
+
     public function mount(int $mesa): void
     {
         $this->mesaId = $mesa;
@@ -41,30 +52,25 @@ new class extends Component
 
     protected function draftKey(): string
     {
-        // si hay comanda activa, el draft va ligado a esa comanda
         if ($this->comandaId) {
             return "draft_comanda_{$this->comandaId}";
         }
-
-        // si no hay comanda, draft por mesa
         return "draft_mesa_{$this->mesaId}";
     }
 
     public function with(): array
     {
-        // 🔄 Sincronizar comanda activa en cada render (por si el admin finalizó desde monitor)
+        // 🔄 Sincronizar comanda activa en cada render
         $activeId = \App\Models\Comanda::where('mesa_id', $this->mesaId)
             ->where('estado', 'en_proceso')
             ->latest('id')
             ->value('id');
 
-        // Si antes había comanda y ahora ya no, limpiar todo lo viejo
         if ($this->comandaId && !$activeId) {
             session()->forget("draft_comanda_{$this->comandaId}");
-            session()->forget("draft_mesa_{$this->mesaId}"); // por si acaso
+            session()->forget("draft_mesa_{$this->mesaId}");
             $this->comandaId = null;
 
-            // cerrar modales/notas si estaban abiertos
             $this->showNotaModal = false;
             $this->notaKey = null;
             $this->notaTexto = '';
@@ -74,8 +80,17 @@ new class extends Component
             $this->tamanoPlatilloId = null;
             $this->tamanoPlatilloNombre = '';
             $this->tamanosOpciones = [];
+
+            $this->showAccionModal = false;
+            $this->accionKey = null;
+            $this->accionNombre = '';
+
+            $this->showDescuentoModal = false;
+            $this->descuentoKey = null;
+            $this->descuentoTexto = '';
+            $this->descuentoNombre = '';
         } else {
-            $this->comandaId = $activeId; // mantiene o actualiza
+            $this->comandaId = $activeId;
         }
 
         $mesa = Mesa::findOrFail($this->mesaId);
@@ -133,7 +148,11 @@ new class extends Component
                 $precioUnit = (float) ($p?->precio ?? 0);
             }
 
-            $subtotal = $precioUnit * $cantidad;
+            $descuento = (int) ($item['descuento'] ?? 0); // % entero 0-100
+            $subtotalBruto = $precioUnit * $cantidad;
+            $subtotal = $descuento > 0
+                ? round($subtotalBruto * (1 - $descuento / 100), 2)
+                : $subtotalBruto;
 
             $tamanoNombre = null;
             if ($tamanoId) {
@@ -146,6 +165,7 @@ new class extends Component
                 'tamano' => $tamanoNombre,
                 'cantidad' => $cantidad,
                 'precio_unitario' => $precioUnit,
+                'descuento' => $descuento,
                 'subtotal' => $subtotal,
                 'notas' => $item['notas'] ?? null,
             ];
@@ -154,7 +174,7 @@ new class extends Component
         $totalDraft = (float) $items->sum('subtotal');
         $totalGeneral = (float) ($totalEnviado + $totalDraft);
 
-       return compact(
+        return compact(
             'mesa',
             'categorias',
             'subcategorias',
@@ -183,7 +203,6 @@ new class extends Component
     {
         $platillo = \App\Models\Platillo::findOrFail($platilloId);
 
-        // Detectar si tiene precios por tamaño
         $tamanos = \App\Models\PlatilloPrecio::query()
             ->join('tamanos', 'tamanos.id', '=', 'platillo_precios.tamano_id')
             ->where('platillo_precios.platillo_id', $platilloId)
@@ -196,7 +215,6 @@ new class extends Component
             ->toArray();
 
         if (count($tamanos) > 0) {
-            // Abrir modal para elegir tamaño
             $this->showTamanoModal = true;
             $this->tamanoPlatilloId = $platilloId;
             $this->tamanoPlatilloNombre = $platillo->nombre;
@@ -204,7 +222,6 @@ new class extends Component
             return;
         }
 
-        // Si no tiene tamaños, agregar directo
         $this->agregarAlDraft($platilloId, null);
     }
 
@@ -212,7 +229,6 @@ new class extends Component
     {
         $draft = session()->get($this->draftKey(), []);
 
-        // key única por platillo + tamaño
         $key = $platilloId . '|' . ($tamanoId ?? '');
 
         if (!isset($draft[$key])) {
@@ -221,6 +237,7 @@ new class extends Component
                 'tamano_id' => $tamanoId,
                 'cantidad' => 1,
                 'notas' => null,
+                'descuento' => 0,
             ];
         } else {
             $draft[$key]['cantidad']++;
@@ -234,8 +251,6 @@ new class extends Component
         if (!$this->tamanoPlatilloId) return;
 
         $this->agregarAlDraft($this->tamanoPlatilloId, $tamanoId);
-
-        // cerrar modal
         $this->cerrarTamanoModal();
     }
 
@@ -247,11 +262,131 @@ new class extends Component
         $this->tamanosOpciones = [];
     }
 
+    // ── Modal de acción ──────────────────────────────────────────────────────
+
+    /**
+     * Se llama al tocar un item del borrador.
+     * Abre el modal para elegir entre Nota y Descuento.
+     */
+    public function abrirAccionItem(string $key): void
+    {
+        $draft = session()->get($this->draftKey(), []);
+
+        if (!isset($draft[$key])) return;
+
+        $platilloId = $draft[$key]['platillo_id'] ?? null;
+        $platillo = $platilloId ? \App\Models\Platillo::find($platilloId) : null;
+
+        $this->accionKey = $key;
+        $this->accionNombre = $platillo?->nombre ?? 'Platillo';
+        $this->showAccionModal = true;
+    }
+
+    public function cerrarAccionModal(): void
+    {
+        $this->showAccionModal = false;
+        $this->accionKey = null;
+        $this->accionNombre = '';
+    }
+
+    /**
+     * Desde el modal de acción, el usuario elige "Nota".
+     */
+    public function irANota(): void
+    {
+        $key = $this->accionKey;
+        $this->cerrarAccionModal();
+
+        if ($key) {
+            $this->abrirNotas($key);
+        }
+    }
+
+    /**
+     * Desde el modal de acción, el usuario elige "Descuento".
+     */
+    public function irADescuento(): void
+    {
+        $key = $this->accionKey;
+        $this->cerrarAccionModal();
+
+        if ($key) {
+            $this->abrirDescuento($key);
+        }
+    }
+
+    // ── Modal de descuento ───────────────────────────────────────────────────
+
+    public function abrirDescuento(string $key): void
+    {
+        $draft = session()->get($this->draftKey(), []);
+
+        if (!isset($draft[$key])) return;
+
+        $platilloId = $draft[$key]['platillo_id'] ?? null;
+        $platillo = $platilloId ? \App\Models\Platillo::find($platilloId) : null;
+
+        $this->descuentoKey = $key;
+        $this->descuentoNombre = $platillo?->nombre ?? 'Platillo';
+        $descuentoActual = (int) ($draft[$key]['descuento'] ?? 0);
+        $this->descuentoTexto = $descuentoActual > 0 ? (string) $descuentoActual : '';
+        $this->showDescuentoModal = true;
+    }
+
+    public function guardarDescuento(): void
+    {
+        if (!$this->descuentoKey) return;
+
+        // Validar: solo enteros 0-100
+        $valor = trim($this->descuentoTexto);
+
+        if ($valor === '' || !ctype_digit($valor)) {
+            $valor = '0';
+        }
+
+        $porcentaje = (int) $valor;
+        $porcentaje = max(0, min(100, $porcentaje));
+
+        $draft = session()->get($this->draftKey(), []);
+
+        if (!isset($draft[$this->descuentoKey])) return;
+
+        $draft[$this->descuentoKey]['descuento'] = $porcentaje;
+
+        session()->put($this->draftKey(), $draft);
+
+        $this->cerrarDescuento();
+    }
+
+    public function quitarDescuento(): void
+    {
+        if (!$this->descuentoKey) return;
+
+        $draft = session()->get($this->draftKey(), []);
+
+        if (isset($draft[$this->descuentoKey])) {
+            $draft[$this->descuentoKey]['descuento'] = 0;
+            session()->put($this->draftKey(), $draft);
+        }
+
+        $this->descuentoTexto = '';
+        $this->cerrarDescuento();
+    }
+
+    public function cerrarDescuento(): void
+    {
+        $this->showDescuentoModal = false;
+        $this->descuentoKey = null;
+        $this->descuentoTexto = '';
+        $this->descuentoNombre = '';
+    }
+
+    // ── Volver / Enviar ──────────────────────────────────────────────────────
+
     public function volverAMesas()
     {
         session()->forget($this->draftKey());
 
-        // Solo forzamos mesa libre si NO había comanda activa
         if (!$this->comandaId) {
             \App\Models\Mesa::whereKey($this->mesaId)->update(['estado' => 'libre']);
         }
@@ -275,7 +410,6 @@ new class extends Component
 
         DB::transaction(function () use ($draft, $meseroId) {
 
-            // 1) Obtener o crear comanda
             if ($this->comandaId) {
                 $comanda = \App\Models\Comanda::findOrFail($this->comandaId);
             } else {
@@ -286,14 +420,10 @@ new class extends Component
                     'total' => 0,
                 ]);
 
-                // Mesa se ocupa SOLO cuando se crea comanda
                 \App\Models\Mesa::whereKey($this->mesaId)->update(['estado' => 'ocupada']);
-
-                // Guardar comandaId para futuras operaciones en esta pantalla
                 $this->comandaId = $comanda->id;
             }
 
-            // 2) Insertar detalles
             $totalAgregado = 0;
 
             foreach ($draft as $item) {
@@ -315,7 +445,13 @@ new class extends Component
                 }
 
                 $cantidad = (int) ($item['cantidad'] ?? 1);
-                $subtotal = $precioUnit * $cantidad;
+                $descuento = (int) ($item['descuento'] ?? 0);
+                $subtotalBruto = $precioUnit * $cantidad;
+                $subtotal = $descuento > 0
+                    ? round($subtotalBruto * (1 - $descuento / 100), 2)
+                    : $subtotalBruto;
+                $montoDescuento = round($subtotalBruto - $subtotal, 2);
+
                 $totalAgregado += $subtotal;
 
                 \App\Models\ComandaDetalle::create([
@@ -327,17 +463,16 @@ new class extends Component
                     'subtotal' => $subtotal,
                     'estado' => 'pendiente',
                     'notas' => $item['notas'] ?? null,
+                    'descuento' => $descuento,
+                    'monto_descuento' => $montoDescuento,
                 ]);
             }
 
-            // 3) Recalcular total (más seguro que solo sumar)
             $nuevoTotal = (float) \App\Models\ComandaDetalle::where('comanda_id', $comanda->id)->sum('subtotal');
             $comanda->update(['total' => $nuevoTotal]);
         });
 
         session()->forget($this->draftKey());
-
-        // cerrar sesión rápida
         session()->forget('mesero_id');
 
         return redirect()->route('pin');
@@ -399,12 +534,9 @@ new class extends Component
         if (!isset($draft[$this->notaKey])) return;
 
         $texto = trim($this->notaTexto);
-
-        // si está vacío, guardamos null para no ensuciar
         $draft[$this->notaKey]['notas'] = $texto === '' ? null : $texto;
 
         session()->put($this->draftKey(), $draft);
-
         $this->cerrarNotas();
     }
 
@@ -436,7 +568,6 @@ new class extends Component
     <div class="h-screen flex">
 
         {{-- Sidebar categorías --}}
-        
         <aside class="w-64 md:w-72 bg-slate-900/60 border-r border-slate-800 p-4 flex flex-col">
             <div class="mb-4">
                 @if($comandaId)
@@ -568,122 +699,126 @@ new class extends Component
             </div>
         </main>
 
-        {{-- Panel derecho opcional: resumen (mínimo) --}}
+        {{-- Panel derecho: resumen --}}
         <aside class="hidden xl:block w-72 bg-slate-900/40 border-l border-slate-800 p-4 overflow-auto">
             <div class="font-bold text-lg mb-3">Orden</div>
 
-        {{-- 1) YA ENVIADO (solo lectura) --}}
-        @if($enviados->isNotEmpty())
-            <div class="mb-4">
-                <div class="text-xs text-slate-400 mb-2">Ya enviado</div>
+            {{-- 1) YA ENVIADO (solo lectura) --}}
+            @if($enviados->isNotEmpty())
+                <div class="mb-4">
+                    <div class="text-xs text-slate-400 mb-2">Ya enviado</div>
 
-                <div class="space-y-2">
-                    @foreach($enviados as $it)
-                        <div class="bg-slate-950/30 border border-slate-800 rounded-xl p-3">
-                            <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
-
-                            @if(!empty($it['tamano']))
-                                <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
-                            @endif
-
-                            @if(!empty($it['notas']))
-                                <div class="text-xs text-slate-400 mt-1 line-clamp-2">
-                                    📝 {{ $it['notas'] }}
-                                </div>
-                            @endif
-
-                            <div class="mt-2 flex items-center justify-between">
-                                <div class="text-slate-300 text-sm">x{{ $it['cantidad'] }}</div>
-                                <div class="font-black">L {{ number_format($it['subtotal'], 2) }}</div>
-                            </div>
-                        </div>
-                    @endforeach
-                </div>
-
-                <div class="mt-3 flex items-center justify-between text-sm">
-                    <div class="text-slate-400">Subtotal enviado</div>
-                    <div class="font-black">L {{ number_format($totalEnviado, 2) }}</div>
-                </div>
-            </div>
-        @endif
-
-        {{-- 2) NUEVO (BORRADOR) (editable) --}}
-        <div class="mb-4">
-            <div class="text-xs text-slate-400 mb-2">Nuevo (borrador)</div>
-
-            @if($items->isEmpty())
-                <div class="text-slate-400 text-sm">Aún no agregas platillos nuevos.</div>
-            @else
-                <div class="space-y-2">
-                    @foreach($items as $it)
-                        <div class="flex items-center justify-between gap-3 bg-slate-950/40 border border-slate-800 rounded-xl p-3">
-                            {{-- Clickeable: abrir notas SOLO en borrador --}}
-                            <button
-                                type="button"
-                                wire:click="abrirNotas('{{ $it['key'] }}')"
-                                class="min-w-0 flex-1 text-left"
-                            >
-                                <div class="flex items-center gap-2">
-                                    <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
-
-                                    @if(!empty($it['notas']))
-                                        <span class="text-[11px] px-2 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-200">
-                                            📝 Nota
-                                        </span>
-                                    @endif
-                                </div>
+                    <div class="space-y-2">
+                        @foreach($enviados as $it)
+                            <div class="bg-slate-950/30 border border-slate-800 rounded-xl p-3">
+                                <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
 
                                 @if(!empty($it['tamano']))
                                     <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
                                 @endif
 
-                                <div class="mt-1 flex items-center justify-between gap-2">
-                                    <div class="text-slate-300 text-sm">
-                                        L {{ number_format($it['precio_unitario'], 2) }} c/u
-                                    </div>
-                                    <div class="font-black text-slate-100">
-                                        L {{ number_format($it['subtotal'], 2) }}
-                                    </div>
-                                </div>
-
                                 @if(!empty($it['notas']))
-                                    <div class="text-xs text-slate-400 mt-1 line-clamp-1">
-                                        {{ $it['notas'] }}
+                                    <div class="text-xs text-slate-400 mt-1 line-clamp-2">
+                                        📝 {{ $it['notas'] }}
                                     </div>
                                 @endif
-                            </button>
 
-                            <div class="flex items-center gap-2">
-                                <div class="w-14 h-12 rounded-xl bg-slate-800 border border-slate-700
-                                            flex items-center justify-center font-black text-2xl">
-                                    {{ $it['cantidad'] }}
+                                <div class="mt-2 flex items-center justify-between">
+                                    <div class="text-slate-300 text-sm">x{{ $it['cantidad'] }}</div>
+                                    <div class="font-black">L {{ number_format($it['subtotal'], 2) }}</div>
                                 </div>
+                            </div>
+                        @endforeach
+                    </div>
 
-                                {{-- X: resta 1 o elimina (solo borrador) --}}
+                    <div class="mt-3 flex items-center justify-between text-sm">
+                        <div class="text-slate-400">Subtotal enviado</div>
+                        <div class="font-black">L {{ number_format($totalEnviado, 2) }}</div>
+                    </div>
+                </div>
+            @endif
+
+            {{-- 2) NUEVO (BORRADOR) (editable) --}}
+            <div class="mb-4">
+                <div class="text-xs text-slate-400 mb-2">Nuevo (borrador)</div>
+
+                @if($items->isEmpty())
+                    <div class="text-slate-400 text-sm">Aún no agregas platillos nuevos.</div>
+                @else
+                    <div class="space-y-2">
+                        @foreach($items as $it)
+                            <div class="flex items-center justify-between gap-3 bg-slate-950/40 border border-slate-800 rounded-xl p-3">
+                                {{-- Clickeable: abre modal de acción --}}
                                 <button
                                     type="button"
-                                    wire:click="quitar('{{ $it['key'] }}')"
-                                    class="w-12 h-12 rounded-xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.98] transition font-black text-2xl"
-                                    title="Quitar (resta 1 o elimina)"
+                                    wire:click="abrirAccionItem('{{ $it['key'] }}')"
+                                    class="min-w-0 flex-1 text-left"
                                 >
-                                    ✕
+                                    <div class="flex items-center gap-2 flex-wrap">
+                                        <div class="font-semibold text-sm truncate">{{ $it['nombre'] }}</div>
+
+                                        @if(!empty($it['notas']))
+                                            <span class="text-[11px] px-2 py-1 rounded-full bg-slate-800 border border-slate-700 text-slate-200">
+                                                📝 Nota
+                                            </span>
+                                        @endif
+
+                                        @if($it['descuento'] > 0)
+                                            <span class="text-[11px] px-2 py-1 rounded-full bg-rose-900/60 border border-rose-700/50 text-rose-300 font-bold">
+                                                −{{ $it['descuento'] }}%
+                                            </span>
+                                        @endif
+                                    </div>
+
+                                    @if(!empty($it['tamano']))
+                                        <div class="text-xs text-slate-400 mt-0.5">Tamaño: {{ $it['tamano'] }}</div>
+                                    @endif
+
+                                    <div class="mt-1 flex items-center justify-between gap-2">
+                                        <div class="text-slate-300 text-sm">
+                                            L {{ number_format($it['precio_unitario'], 2) }} c/u
+                                        </div>
+                                        <div class="font-black text-slate-100">
+                                            L {{ number_format($it['subtotal'], 2) }}
+                                        </div>
+                                    </div>
+
+                                    @if(!empty($it['notas']))
+                                        <div class="text-xs text-slate-400 mt-1 line-clamp-1">
+                                            {{ $it['notas'] }}
+                                        </div>
+                                    @endif
                                 </button>
+
+                                <div class="flex items-center gap-2">
+                                    <div class="w-14 h-12 rounded-xl bg-slate-800 border border-slate-700
+                                                flex items-center justify-center font-black text-2xl">
+                                        {{ $it['cantidad'] }}
+                                    </div>
+
+                                    <button
+                                        type="button"
+                                        wire:click="quitar('{{ $it['key'] }}')"
+                                        class="w-12 h-12 rounded-xl bg-rose-600/90 hover:bg-rose-600 active:scale-[0.98] transition font-black text-2xl"
+                                        title="Quitar (resta 1 o elimina)"
+                                    >
+                                        ✕
+                                    </button>
+                                </div>
                             </div>
-                        </div>
-                    @endforeach
-                </div>
-
-        
-            @endif
-        </div>
-
-        {{-- 3) TOTAL GENERAL --}}
-        <div class="pt-4 border-t border-slate-800">
-            <div class="flex items-center justify-between">
-                <div class="text-slate-300 font-semibold">Total</div>
-                <div class="text-2xl font-black">L {{ number_format($totalGeneral, 2) }}</div>
+                        @endforeach
+                    </div>
+                @endif
             </div>
-        </div>
+
+            {{-- 3) TOTAL GENERAL --}}
+            <div class="pt-4 border-t border-slate-800">
+                <div class="flex items-center justify-between">
+                    <div class="text-slate-300 font-semibold">Total</div>
+                    <div class="text-2xl font-black">L {{ number_format($totalGeneral, 2) }}</div>
+                </div>
+            </div>
+
             @if(!$items->isEmpty())
                 <div class="mt-4 pt-4 border-t border-slate-800">
                     <div class="flex items-center justify-between">
@@ -695,107 +830,264 @@ new class extends Component
         </aside>
 
     </div>
-        @if($showTamanoModal)
-            <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-                <div class="absolute inset-0 bg-black/70" wire:click="cerrarTamanoModal"></div>
 
-                <div class="relative w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5">
-                    <div class="flex items-start justify-between gap-4 mb-4">
-                        <div>
-                            <div class="text-sm text-slate-400">Selecciona tamaño</div>
-                            <div class="text-xl font-black">{{ $tamanoPlatilloNombre }}</div>
-                        </div>
+    {{-- ══════════════════════════════════════════════════════
+         MODAL: Elegir acción (Nota | Descuento)
+    ══════════════════════════════════════════════════════ --}}
+    @if($showAccionModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-black/70" wire:click="cerrarAccionModal"></div>
+
+            <div class="relative w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5">
+                <div class="flex items-start justify-between gap-4 mb-5">
+                    <div>
+                        <div class="text-sm text-slate-400">¿Qué deseas hacer con</div>
+                        <div class="text-xl font-black leading-tight">{{ $accionNombre }}</div>
+                    </div>
+
+                    <button
+                        type="button"
+                        wire:click="cerrarAccionModal"
+                        class="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 font-black text-xl flex items-center justify-center flex-shrink-0"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-2 gap-3">
+                    {{-- Botón: Nota --}}
+                    <button
+                        type="button"
+                        wire:click="irANota"
+                        class="flex flex-col items-center justify-center gap-2 rounded-2xl border border-slate-700 bg-slate-800/60 hover:bg-slate-800 active:scale-[0.98] transition p-5"
+                    >
+                        <span class="text-3xl">📝</span>
+                        <span class="font-bold text-base">Nota</span>
+                        <span class="text-xs text-slate-400 text-center leading-tight">Instrucciones especiales</span>
+                    </button>
+
+                    {{-- Botón: Descuento --}}
+                    <button
+                        type="button"
+                        wire:click="irADescuento"
+                        class="flex flex-col items-center justify-center gap-2 rounded-2xl border border-rose-700/40 bg-rose-900/20 hover:bg-rose-900/40 active:scale-[0.98] transition p-5"
+                    >
+                        <span class="text-3xl">🏷️</span>
+                        <span class="font-bold text-base text-rose-300">Descuento</span>
+                        <span class="text-xs text-rose-400/70 text-center leading-tight">Aplicar % al platillo</span>
+                    </button>
+                </div>
+
+                <div class="text-xs text-slate-500 mt-4 text-center">
+                    Toca afuera para cerrar.
+                </div>
+            </div>
+        </div>
+    @endif
+
+    {{-- ══════════════════════════════════════════════════════
+         MODAL: Descuento
+    ══════════════════════════════════════════════════════ --}}
+    @if($showDescuentoModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-black/70" wire:click="cerrarDescuento"></div>
+
+            <div class="relative w-full max-w-sm rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5">
+                <div class="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                        <div class="text-sm text-slate-400">Descuento para</div>
+                        <div class="text-xl font-black">{{ $descuentoNombre }}</div>
+                    </div>
+
+                    <button
+                        type="button"
+                        wire:click="cerrarDescuento"
+                        class="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 font-black text-xl flex items-center justify-center flex-shrink-0"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                {{-- Input de porcentaje --}}
+                <div class="relative mb-1">
+                    <input
+                        type="number"
+                        inputmode="numeric"
+                        pattern="[0-9]*"
+                        min="0"
+                        max="100"
+                        step="1"
+                        wire:model.live="descuentoTexto"
+                        placeholder="0"
+                        class="w-full rounded-2xl bg-slate-950/60 border border-slate-700 px-4 py-4 pr-14
+                               text-3xl font-black text-center outline-none
+                               focus:ring-2 focus:ring-rose-600/60 focus:border-rose-600/60
+                               [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
+                    />
+                    <span class="absolute right-4 top-1/2 -translate-y-1/2 text-2xl font-black text-slate-400 pointer-events-none">
+                        %
+                    </span>
+                </div>
+                <div class="text-xs text-slate-500 mb-5 text-center">
+                    Ingresa un número entero entre 0 y 100
+                </div>
+
+                {{-- Atajos rápidos --}}
+                <div class="flex gap-2 mb-5">
+                    @foreach([5, 10, 15, 20, 50] as $pct)
+                        <button
+                            type="button"
+                            wire:click="$set('descuentoTexto', '{{ $pct }}')"
+                            class="flex-1 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700
+                                   py-2 text-sm font-bold transition active:scale-[0.97]"
+                        >
+                            {{ $pct }}%
+                        </button>
+                    @endforeach
+                </div>
+
+                <div class="flex items-center justify-between gap-3">
+                    <button
+                        type="button"
+                        wire:click="quitarDescuento"
+                        class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold transition text-sm"
+                    >
+                        Quitar descuento
+                    </button>
+
+                    <div class="flex items-center gap-3">
+                        <button
+                            type="button"
+                            wire:click="cerrarDescuento"
+                            class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold transition text-sm"
+                        >
+                            Cancelar
+                        </button>
 
                         <button
                             type="button"
-                            wire:click="cerrarTamanoModal"
-                            class="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 font-black text-2xl"
+                            wire:click="guardarDescuento"
+                            class="px-5 py-3 rounded-xl bg-rose-600/90 hover:bg-rose-600 font-bold transition text-sm"
                         >
-                            ✕
+                            Aplicar
                         </button>
                     </div>
+                </div>
 
-                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                        @foreach($tamanosOpciones as $op)
-                            <button
-                                type="button"
-                                wire:click="seleccionarTamano({{ $op['tamano_id'] }})"
-                                class="rounded-2xl border border-slate-800 bg-slate-950/40 hover:bg-slate-950/60 p-4 text-left transition active:scale-[0.99]"
-                            >
-                                <div class="font-bold text-lg">{{ $op['tamano_nombre'] }}</div>
-                                <div class="text-slate-300 mt-1 font-black text-xl">
-                                    L {{ number_format((float)$op['precio'], 2) }}
-                                </div>
-                            </button>
-                        @endforeach
-                    </div>
-
-                    <div class="text-xs text-slate-500 mt-4">
-                        Tip: tocar afuera también cierra el modal.
-                    </div>
+                <div class="text-xs text-slate-500 mt-3 text-center">
+                    Toca afuera para cerrar.
                 </div>
             </div>
-        @endif
+        </div>
+    @endif
 
-        @if($showNotaModal)
-            <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
-                <div class="absolute inset-0 bg-black/70" wire:click="cerrarNotas"></div>
+    {{-- ══════════════════════════════════════════════════════
+         MODAL: Tamaño
+    ══════════════════════════════════════════════════════ --}}
+    @if($showTamanoModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-black/70" wire:click="cerrarTamanoModal"></div>
 
-                <div class="relative w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5">
-                    <div class="flex items-start justify-between gap-4 mb-4">
-                        <div>
-                            <div class="text-sm text-slate-400">Notas para</div>
-                            <div class="text-xl font-black">{{ $notaTitulo }}</div>
-                        </div>
+            <div class="relative w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5">
+                <div class="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                        <div class="text-sm text-slate-400">Selecciona tamaño</div>
+                        <div class="text-xl font-black">{{ $tamanoPlatilloNombre }}</div>
+                    </div>
 
+                    <button
+                        type="button"
+                        wire:click="cerrarTamanoModal"
+                        class="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 font-black text-2xl"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    @foreach($tamanosOpciones as $op)
+                        <button
+                            type="button"
+                            wire:click="seleccionarTamano({{ $op['tamano_id'] }})"
+                            class="rounded-2xl border border-slate-800 bg-slate-950/40 hover:bg-slate-950/60 p-4 text-left transition active:scale-[0.99]"
+                        >
+                            <div class="font-bold text-lg">{{ $op['tamano_nombre'] }}</div>
+                            <div class="text-slate-300 mt-1 font-black text-xl">
+                                L {{ number_format((float)$op['precio'], 2) }}
+                            </div>
+                        </button>
+                    @endforeach
+                </div>
+
+                <div class="text-xs text-slate-500 mt-4">
+                    Tip: tocar afuera también cierra el modal.
+                </div>
+            </div>
+        </div>
+    @endif
+
+    {{-- ══════════════════════════════════════════════════════
+         MODAL: Nota
+    ══════════════════════════════════════════════════════ --}}
+    @if($showNotaModal)
+        <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div class="absolute inset-0 bg-black/70" wire:click="cerrarNotas"></div>
+
+            <div class="relative w-full max-w-xl rounded-2xl bg-slate-900 border border-slate-800 shadow-2xl p-5">
+                <div class="flex items-start justify-between gap-4 mb-4">
+                    <div>
+                        <div class="text-sm text-slate-400">Notas para</div>
+                        <div class="text-xl font-black">{{ $notaTitulo }}</div>
+                    </div>
+
+                    <button
+                        type="button"
+                        wire:click="cerrarNotas"
+                        class="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 font-black text-2xl"
+                    >
+                        ✕
+                    </button>
+                </div>
+
+                <textarea
+                    wire:model.live="notaTexto"
+                    rows="4"
+                    placeholder="Ej: sin cebolla, bien cocido, sin hielo, aparte salsa..."
+                    class="w-full rounded-2xl bg-slate-950/60 border border-slate-800 p-3 outline-none focus:ring-2 focus:ring-slate-600"
+                ></textarea>
+
+                <div class="flex items-center justify-between gap-3 mt-4">
+                    <button
+                        type="button"
+                        wire:click="limpiarNotas"
+                        class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold transition"
+                    >
+                        Quitar nota
+                    </button>
+
+                    <div class="flex items-center gap-3">
                         <button
                             type="button"
                             wire:click="cerrarNotas"
-                            class="w-12 h-12 rounded-xl bg-slate-800 hover:bg-slate-700 font-black text-2xl"
-                        >
-                            ✕
-                        </button>
-                    </div>
-
-                    <textarea
-                        wire:model.live="notaTexto"
-                        rows="4"
-                        placeholder="Ej: sin cebolla, bien cocido, sin hielo, aparte salsa..."
-                        class="w-full rounded-2xl bg-slate-950/60 border border-slate-800 p-3 outline-none focus:ring-2 focus:ring-slate-600"
-                    ></textarea>
-
-                    <div class="flex items-center justify-between gap-3 mt-4">
-                        <button
-                            type="button"
-                            wire:click="limpiarNotas"
                             class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold transition"
                         >
-                            Quitar nota
+                            Cancelar
                         </button>
 
-                        <div class="flex items-center gap-3">
-                            <button
-                                type="button"
-                                wire:click="cerrarNotas"
-                                class="px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 font-semibold transition"
-                            >
-                                Cancelar
-                            </button>
-
-                            <button
-                                type="button"
-                                wire:click="guardarNotas"
-                                class="px-5 py-3 rounded-xl bg-emerald-600/90 hover:bg-emerald-600 font-bold transition"
-                            >
-                                Guardar
-                            </button>
-                        </div>
-                    </div>
-
-                    <div class="text-xs text-slate-500 mt-3">
-                        Tip: tocar afuera también cierra.
+                        <button
+                            type="button"
+                            wire:click="guardarNotas"
+                            class="px-5 py-3 rounded-xl bg-emerald-600/90 hover:bg-emerald-600 font-bold transition"
+                        >
+                            Guardar
+                        </button>
                     </div>
                 </div>
+
+                <div class="text-xs text-slate-500 mt-3">
+                    Tip: tocar afuera también cierra.
+                </div>
             </div>
-        @endif
+        </div>
+    @endif
 </div>

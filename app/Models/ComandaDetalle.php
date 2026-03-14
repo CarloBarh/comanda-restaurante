@@ -17,6 +17,8 @@ class ComandaDetalle extends Model
         'subtotal',
         'estado',
         'notas',
+          'descuento',
+          'monto_descuento',
     ];
 
     public function comanda()
