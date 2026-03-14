@@ -218,6 +218,7 @@ new class extends Component
 </nav>
 
 
+
     {{-- CONTENIDO --}}
     <div class="flex-1 flex items-center justify-center p-4">
         <div class="w-full max-w-3xl bg-slate-900/60 border border-slate-800 rounded-2xl p-6 md:p-10 shadow-2xl">
