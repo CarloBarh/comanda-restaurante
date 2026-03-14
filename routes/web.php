@@ -2,6 +2,9 @@
 
 use Illuminate\Support\Facades\Route;
 
+
+
+Route::redirect('/', '/pin');
 Route::livewire('/pin', 'pin-pad')->name('pin');
 
 Route::middleware('mesero.pin')->group(function () {
