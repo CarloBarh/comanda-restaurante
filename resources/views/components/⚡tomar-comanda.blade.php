@@ -396,7 +396,8 @@ new class extends Component
 
     public function enviarACocina()
     {
-        $draft = session()->get($this->draftKey(), []);
+        $draftKey = $this->draftKey();
+        $draft = session()->get($draftKey, []);
 
         if (count($draft) === 0) {
             $this->addError('draft', 'Agrega al menos un platillo antes de enviar.');
@@ -424,8 +425,6 @@ new class extends Component
                 $this->comandaId = $comanda->id;
             }
 
-            $totalAgregado = 0;
-
             foreach ($draft as $item) {
                 $platillo = \App\Models\Platillo::findOrFail($item['platillo_id']);
 
@@ -452,8 +451,6 @@ new class extends Component
                     : $subtotalBruto;
                 $montoDescuento = round($subtotalBruto - $subtotal, 2);
 
-                $totalAgregado += $subtotal;
-
                 \App\Models\ComandaDetalle::create([
                     'comanda_id' => $comanda->id,
                     'platillo_id' => $platillo->id,
@@ -472,7 +469,7 @@ new class extends Component
             $comanda->update(['total' => $nuevoTotal]);
         });
 
-        session()->forget($this->draftKey());
+        session()->forget($draftKey);   // ✅ ahora sí borra el correcto
         session()->forget('mesero_id');
 
         return redirect()->route('pin');
