@@ -577,7 +577,7 @@ new class extends Component
                     </div>
                 @endif
                 <div class="text-xs text-slate-400">Mesa</div>
-                <div class="text-2xl font-black">{{ $mesa->numero }}</div>
+                <div class="text-2xl font-black">{{ $mesa->zona }} - Mesa {{ $mesa->numero_zona }}</div>
             </div>
 
             <div class="mb-3">
