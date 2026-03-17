@@ -87,10 +87,6 @@ new class extends Component
              
             </div>
 
-                     <a href="{{ route('pin') }}"
-               class="px-4 py-2 rounded-xl text-sm font-bold transition-all text-slate-400 hover:text-white hover:bg-slate-800">
-                📲 Volver a PIN
-            </a>
 
             <div class="px-4 py-2 rounded-xl text-right" style="background:#1f0a0a; border:1px solid #ef444433;">
                 <div class="text-xs" style="color:#ef4444;">Total salidas hoy</div>
