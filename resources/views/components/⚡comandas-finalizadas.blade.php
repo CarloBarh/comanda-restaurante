@@ -6,6 +6,7 @@ use App\Models\Comanda;
 new class extends Component
 {
     public string $fecha = '';
+    public bool $showCerrar = false;
 
     public function mount(): void
     {
@@ -21,7 +22,7 @@ new class extends Component
                 'detalles.platillo',
                 'detalles.tamano',
             ])
-            ->where('estado', 'cerrado')
+            ->whereIn('estado', ['finalizado', 'entregado'])
             ->whereDate('created_at', $this->fecha)
             ->orderByDesc('created_at')
             ->get();
@@ -32,16 +33,19 @@ new class extends Component
         return compact('comandas', 'totalDelDia', 'totalItems');
     }
 
-    public function imprimirYCerrar(): void
+    public function imprimir(): void
     {
-        // Marcar todas las comandas finalizadas del día como cerradas
+        $this->dispatch('imprimir');
+    }
+
+    public function confirmarCierre(): void
+    {
         Comanda::query()
             ->where('estado', 'finalizado')
             ->whereDate('created_at', $this->fecha)
             ->update(['estado' => 'cerrado']);
 
-        // Disparar el print desde JS
-        $this->dispatch('imprimir');
+        $this->showCerrar = false;
     }
 };
 ?>
@@ -75,17 +79,26 @@ new class extends Component
             </div>
 
             <div class="flex items-center gap-3">
-                {{-- Botón imprimir --}}
                 @if($comandas->isNotEmpty())
                     <button
                         type="button"
-                        wire:click="imprimirYCerrar"
-                        wire:confirm="¿Imprimir y marcar todas las comandas de hoy como cerradas?"
+                        wire:click="imprimir"
                         class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all hover:opacity-80"
                         style="background: #22c55e22; border: 1.5px solid #22c55e44; color: #22c55e;"
                     >
-                        🖨️ Imprimir y cerrar
+                        🖨️ Imprimir
                     </button>
+
+                    @if($comandas->where('estado', 'finalizado')->isNotEmpty())
+                        <button
+                            type="button"
+                            wire:click="$set('showCerrar', true)"
+                            class="flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-bold transition-all hover:opacity-80"
+                            style="background: #6366f122; border: 1.5px solid #6366f144; color: #6366f1;"
+                        >
+                            🔒 Cerrar finalizadas
+                        </button>
+                    @endif
                 @endif
 
                 <a href="{{ route('pin') }}"
@@ -239,6 +252,59 @@ new class extends Component
 
         @endif
     </main>
+
+    {{-- ── MODAL: CONFIRMAR CIERRE ─────────────────────────────── --}}
+    @if($showCerrar)
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="absolute inset-0 bg-black/80" wire:click="$set('showCerrar', false)"></div>
+
+        <div class="relative w-full max-w-sm rounded-2xl p-7 flex flex-col gap-5"
+             style="background:#0d1117; border:1.5px solid #6366f144;
+                    box-shadow:0 0 60px #6366f115, 0 24px 48px rgba(0,0,0,0.6);">
+
+            <div class="flex justify-center">
+                <div class="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
+                     style="background:#6366f122; border:1.5px solid #6366f144;">
+                    🔒
+                </div>
+            </div>
+
+            <div class="text-center">
+                <div class="font-black text-lg mb-1" style="color:#f1f5f9;">¿Cerrar finalizadas?</div>
+                <div class="text-sm" style="color:#475569;">
+                    Las <span class="font-bold" style="color:#f1f5f9;">{{ $comandas->where('estado', 'finalizado')->count() }}</span>
+                    comanda(s) con estado <span class="font-bold" style="color:#22c55e;">finalizado</span>
+                    del {{ \Carbon\Carbon::parse($fecha)->format('d/m/Y') }} pasarán a estado
+                    <span class="font-bold" style="color:#6366f1;">cerrado</span>.
+                    <br><br>
+                    Esta acción no se puede deshacer.
+                </div>
+            </div>
+
+            <div class="flex gap-3">
+                <button
+                    type="button"
+                    wire:click="$set('showCerrar', false)"
+                    class="flex-1 py-3 rounded-xl font-bold text-sm transition-all hover:opacity-80"
+                    style="background:#1a2030; color:#94a3b8; border:1.5px solid #2a3441;"
+                >
+                    Cancelar
+                </button>
+                <button
+                    type="button"
+                    wire:click="confirmarCierre"
+                    class="flex-1 py-3 rounded-xl font-black text-sm transition-all active:scale-[0.98]"
+                    style="background:#6366f122; color:#6366f1; border:1.5px solid #6366f144;"
+                >
+                    🔒 Confirmar
+                </button>
+            </div>
+
+            <div class="text-xs text-center" style="color:#334155;">Toca afuera para cancelar</div>
+        </div>
+    </div>
+    @endif
+
 </div>
 
 {{-- Estilos de impresión --}}
@@ -270,12 +336,10 @@ new class extends Component
             border: 1px solid #ccc !important;
         }
 
-        /* Filas de tabla en blanco y negro */
         [class*="grid"] {
             border-bottom: 1px solid #ddd !important;
         }
 
-        /* Ocultar resumen de colores */
         .grid.grid-cols-3 { display: none !important; }
     }
 </style>

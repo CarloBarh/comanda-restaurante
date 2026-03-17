@@ -23,3 +23,7 @@ Route::livewire('/historico', 'historico-pedidos')->name('historico');
 Route::livewire('/facturas','facturas')->name('facturas');
 Route::livewire('/facturas/{factura}', 'factura-detalles')->name('facturas.detalle');
 
+Route::livewire('/gastos','gastos')->name('gastos');
+
+Route::livewire('/caja', 'caja')->name('caja');
+
