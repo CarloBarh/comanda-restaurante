@@ -48,10 +48,7 @@ new class extends Component
                 </div>
             </div>
 
-            <a href="{{ route('pin') }}"
-               class="px-4 py-2 rounded-xl text-sm font-bold transition-all text-slate-400 hover:text-white hover:bg-slate-800">
-                📲 Volver a PIN
-            </a>
+          
 
             <div class="flex items-center gap-3">
                 <span class="inline-flex items-center gap-2 text-xs px-3 py-1.5 rounded-full"

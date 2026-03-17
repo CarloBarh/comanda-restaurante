@@ -186,10 +186,7 @@ new class extends Component
             </div>
 
 
-                     <a href="{{ route('pin') }}"
-               class="px-4 py-2 rounded-xl text-sm font-bold transition-all text-slate-400 hover:text-white hover:bg-slate-800">
-                📲 Volver a PIN
-            </a>
+       
 
             <div class="flex items-center gap-3">
                 {{-- Selector de fecha --}}
