@@ -26,6 +26,7 @@ new class extends Component
 
     {{-- HEADER --}}
     <header style="background:#0d1117; border-bottom:1px solid #1a2030;">
+             @include('partials.navbar')
         <div class="max-w-screen-xl mx-auto px-6 py-4 flex items-center justify-between gap-4">
             <div class="flex items-center gap-4">
                 <a href="{{ route('facturas') }}"
