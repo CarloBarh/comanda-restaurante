@@ -527,10 +527,10 @@ function construirPDF(data) {
                         <div class="flex items-center gap-2">
                             <div class="w-10 h-10 rounded-xl flex items-center justify-center font-black text-base"
                                  style="background: #6366f122; color: #6366f1; border: 1.5px solid #6366f155;">
-                                {{ $comanda->mesa?->numero ?? '?' }}
+                                {{ $comanda->mesa?->numero_zona ?? '?' }}
                             </div>
                             <div>
-                                <div class="text-xs" style="color: #475569;">Mesa</div>
+                                <div class="text-xs" style="color: #475569;">{{ $comanda->mesa?->zona ?? 'Zona' }}</div>
                                 <div class="text-sm font-bold" style="color: #e2e8f0;">{{ $comanda->mesero?->nombre ?? '—' }}</div>
                             </div>
                         </div>
