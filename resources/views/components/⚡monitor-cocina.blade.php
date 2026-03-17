@@ -38,6 +38,7 @@ public function with(): array
 
     {{-- HEADER --}}
     <header style="background: #0d1117; border-bottom: 1px solid #1e2530;">
+             @include('partials.navbar')
         <div class="max-w-screen-2xl mx-auto px-6 py-4 flex items-center justify-between">
             <div class="flex items-center gap-4">
                 <div class="text-3xl" style="filter: drop-shadow(0 0 8px #f97316);">🔥</div>
