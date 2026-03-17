@@ -22,6 +22,8 @@ new class extends Component
             ->with(['mesa', 'mesero'])
             ->when($this->busqueda, fn($q) =>
                 $q->where('numero_factura', 'like', '%'.$this->busqueda.'%')
+                  ->orWhere('cliente_nombre', 'like', '%'.$this->busqueda.'%')
+                  ->orWhere('cliente_rtn', 'like', '%'.$this->busqueda.'%')
                   ->orWhereHas('mesa', fn($q2) => $q2->where('numero', 'like', '%'.$this->busqueda.'%'))
                   ->orWhereHas('mesero', fn($q2) => $q2->where('nombre', 'like', '%'.$this->busqueda.'%'))
             )
@@ -80,7 +82,7 @@ new class extends Component
                 <input
                     type="text"
                     wire:model.live.debounce.300ms="busqueda"
-                    placeholder="N° factura, mesa, mesero..."
+                    placeholder="N° factura, cliente, RTN, mesa, mesero..."
                     class="w-full pl-8 pr-4 py-2.5 rounded-xl text-sm outline-none"
                     style="background:#0d1117; border:1px solid #1a2030; color:#e2e8f0;"
                 />
@@ -116,9 +118,10 @@ new class extends Component
             <div class="rounded-2xl overflow-hidden" style="border:1px solid #1a2030;">
 
                 <div class="grid text-xs font-black uppercase tracking-widest px-5 py-3"
-                     style="grid-template-columns: 1.5fr 0.8fr 1fr 1fr 0.8fr 0.8fr auto;
+                     style="grid-template-columns: 1.4fr 1.2fr 0.7fr 1fr 1fr 0.8fr 0.8fr auto;
                             background:#0d1117; border-bottom:1px solid #1a2030; color:#475569;">
                     <div>N° Factura</div>
+                    <div>Cliente</div>
                     <div>Mesa</div>
                     <div>Mesero</div>
                     <div>Fecha</div>
@@ -143,7 +146,7 @@ new class extends Component
                         };
                     @endphp
                     <div class="grid items-center px-5 py-3.5 transition-colors hover:bg-white/[0.02]"
-                         style="grid-template-columns: 1.5fr 0.8fr 1fr 1fr 0.8fr 0.8fr auto;
+                         style="grid-template-columns: 1.4fr 1.2fr 0.7fr 1fr 1fr 0.8fr 0.8fr auto;
                                 border-bottom:1px solid #1a2030;">
 
                         <div>
@@ -151,6 +154,18 @@ new class extends Component
                                 {{ $f->numero_factura ?? '—' }}
                             </div>
                             <div class="text-xs" style="color:#334155;">#{{ str_pad($f->id, 4, '0', STR_PAD_LEFT) }}</div>
+                        </div>
+
+                        {{-- Cliente --}}
+                        <div>
+                            <div class="text-sm font-semibold truncate" style="color:#cbd5e1;">
+                                {{ $f->cliente_nombre ?? 'Consumidor Final' }}
+                            </div>
+                            @if($f->cliente_rtn)
+                                <div class="text-xs font-mono mt-0.5" style="color:#475569;">
+                                    RTN: {{ $f->cliente_rtn }}
+                                </div>
+                            @endif
                         </div>
 
                         <div>

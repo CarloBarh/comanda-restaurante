@@ -19,6 +19,8 @@ class Factura extends Model
         'importe_exento',
         'importe_exonerado',
         'numero_factura',
+        'cliente_nombre',
+'cliente_rtn',
     ];
 
     protected $casts = [

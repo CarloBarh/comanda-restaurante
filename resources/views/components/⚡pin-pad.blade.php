@@ -147,8 +147,8 @@ new class extends Component
                 <button
                     type="button"
                     class="flex items-center gap-1.5 px-4 py-2 rounded-xl text-sm font-bold transition-all"
-                    style="color: {{ request()->routeIs('finalizadas') || request()->routeIs('historico') || request()->routeIs('facturas') || request()->routeIs('facturas.detalle') ? '#a78bfa' : '#64748b' }};
-                           background: {{ request()->routeIs('finalizadas') || request()->routeIs('historico') || request()->routeIs('facturas') || request()->routeIs('facturas.detalle') ? '#a78bfa18' : 'transparent' }};"
+                    style="color: {{ request()->routeIs('finalizadas') || request()->routeIs('gastos') || request()->routeIs('caja') ? '#a78bfa' : '#64748b' }};
+       background: {{ request()->routeIs('finalizadas') || request()->routeIs('gastos') || request()->routeIs('caja') ? '#a78bfa18' : 'transparent' }};"
                 >
                     <span>📊</span>
                     <span>Reportes</span>
@@ -203,6 +203,28 @@ new class extends Component
                                 <span class="ml-auto w-1.5 h-1.5 rounded-full bg-violet-400"></span>
                             @endif
                         </a>
+
+                        <div style="height:1px; background:#1a2030; margin:4px 16px;"></div>
+
+<a href="{{ route('gastos') }}"
+   class="flex items-center gap-3 px-4 py-2.5 text-sm font-semibold transition-colors
+          {{ request()->routeIs('gastos') ? 'text-red-400' : 'text-slate-400 hover:text-white hover:bg-white/5' }}">
+    <span class="text-base">💸</span>
+    <span>Gastos</span>
+    @if(request()->routeIs('gastos'))
+        <span class="ml-auto w-1.5 h-1.5 rounded-full bg-red-400"></span>
+    @endif
+</a>
+
+<a href="{{ route('caja') }}"
+   class="flex items-center gap-3 px-4 py-2.5 text-sm font-semibold transition-colors
+          {{ request()->routeIs('caja') ? 'text-emerald-400' : 'text-slate-400 hover:text-white hover:bg-white/5' }}">
+    <span class="text-base">🏦</span>
+    <span>Caja</span>
+    @if(request()->routeIs('caja'))
+        <span class="ml-auto w-1.5 h-1.5 rounded-full bg-emerald-400"></span>
+    @endif
+</a>
                     </div>
                 </div>
             </div>

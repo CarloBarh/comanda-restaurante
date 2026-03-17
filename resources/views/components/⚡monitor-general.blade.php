@@ -7,12 +7,21 @@ use App\Models\ComandaDetalle;
 use App\Models\Mesa;
 use App\Models\Factura;
 use App\Models\FacturaDetalle;
+use App\Models\Caja;
+use App\Models\CajaActiva;
 
 new class extends Component
 {
     public bool $showPago = false;
     public ?int $comandaAPagar = null;
     public string $tipoPago = '';
+    public bool $showCajaCerrada = false;
+
+    // ── Paso del modal ──────────────────────────────────────────
+    // 'pago' = elegir tipo de pago | 'cliente' = datos del cliente
+    public string $paso = 'pago';
+    public string $clienteNombre = '';
+    public string $clienteRtn = '';
 
     public function with(): array
     {
@@ -32,19 +41,44 @@ new class extends Component
 
     public function abrirModalPago(int $comandaId): void
     {
+        // Verificar si la caja está abierta
+        if (!CajaActiva::estaAbierta()) {
+            $this->showCajaCerrada = true;
+            return;
+        }
+
         $this->comandaAPagar = $comandaId;
         $this->tipoPago = '';
+        $this->paso = 'pago';
+        $this->clienteNombre = '';
+        $this->clienteRtn = '';
         $this->showPago = true;
+    }
+
+    public function avanzarACliente(): void
+    {
+        if (!$this->tipoPago) return;
+        $this->paso = 'cliente';
+    }
+
+    public function volverAPago(): void
+    {
+        $this->paso = 'pago';
     }
 
     public function realizarPago(): void
     {
         if (!$this->comandaAPagar || !$this->tipoPago) return;
 
+        // Validar nombre obligatorio
+        if (trim($this->clienteNombre) === '') {
+            $this->addError('clienteNombre', 'El nombre del cliente es obligatorio.');
+            return;
+        }
+
         $comanda = Comanda::with(['mesa', 'mesero', 'detalles.platillo', 'detalles.tamano'])
             ->findOrFail($this->comandaAPagar);
 
-        // ── Calcular totales fiscales ───────────────────────────────────────
         $total       = (float) $comanda->total;
         $baseGravada = round($total / 1.15, 2);
         $isv15       = round($total - $baseGravada, 2);
@@ -57,15 +91,16 @@ new class extends Component
                 'mesa_id'             => $comanda->mesa_id,
                 'mesero_id'           => $comanda->mesero_id,
                 'tipo_pago'           => $this->tipoPago,
+                'cliente_nombre'      => trim($this->clienteNombre),
+                'cliente_rtn'         => trim($this->clienteRtn) ?: null,
                 'total'               => $total,
                 'base_gravada'        => $baseGravada,
                 'isv_15'              => $isv15,
                 'importe_exento'      => 0,
                 'importe_exonerado'   => 0,
-                'numero_factura'      => null, // se genera tras conocer el id
+                'numero_factura'      => null,
             ]);
 
-            // Actualizar número correlativo ahora que tenemos el id
             $factura->update([
                 'numero_factura' => $factura->generarNumero(),
             ]);
@@ -87,9 +122,9 @@ new class extends Component
                 ]);
             }
 
-            // 3) Cerrar comanda y mesa
+            // 3) Finalizar comanda y liberar mesa
             $comanda->update([
-                'estado'    => 'cerrado',
+                'estado'    => 'finalizado',
                 'tipo_pago' => $this->tipoPago,
             ]);
 
@@ -99,23 +134,36 @@ new class extends Component
             Mesa::whereKey($comanda->mesa_id)
                 ->update(['estado' => 'libre']);
 
-            // 4) Enviar datos al JS para imprimir el PDF
+            // 4) Registrar entrada en caja
+            Caja::create([
+                'tipo'        => 'entrada',
+                'concepto'    => 'Venta mesa ' . ($comanda->mesa?->numero ?? '?') . ' — ' . ($this->clienteNombre ?: 'Consumidor Final'),
+                'monto'       => $total,
+                'factura_id'  => $factura->id,
+                'mesero_id'   => $comanda->mesero_id,
+                'metodo_pago' => $this->tipoPago,
+                'estado'      => 'activo',
+            ]);
+
+            // 5) Enviar datos al JS para imprimir el PDF
             $facturaData = json_encode([
                 'comanda_id'     => $comanda->id,
                 'factura_id'     => $factura->id,
                 'numero_factura' => $factura->numero_factura,
                 'mesa'           => $comanda->mesa?->numero ?? '?',
                 'mesero'         => $comanda->mesero?->nombre ?? '—',
+                'cliente'        => trim($this->clienteNombre),
+                'rtn'            => trim($this->clienteRtn) ?: null,
                 'tipo_pago'      => $this->tipoPago,
                 'fecha'          => now()->format('d/m/Y H:i'),
                 'total'          => $total,
                 'base_gravada'   => $baseGravada,
                 'isv_15'         => $isv15,
                 'detalles'       => $comanda->detalles->map(fn($d) => [
-                    'cantidad'  => $d->cantidad,
-                    'platillo'  => $d->platillo?->nombre ?? 'Platillo',
-                    'tamano'    => $d->tamano?->nombre ?? '',
-                    'notas'     => $d->notas ?? '',
+                    'cantidad'         => $d->cantidad,
+                    'platillo'         => $d->platillo?->nombre ?? 'Platillo',
+                    'tamano'           => $d->tamano?->nombre ?? '',
+                    'notas'            => $d->notas ?? '',
                     'precio'           => (float) ($d->precio_unitario ?? 0),
                     'descuento'        => (int) ($d->descuento ?? 0),
                     'monto_descuento'  => (float) ($d->monto_descuento ?? 0),
@@ -136,6 +184,9 @@ new class extends Component
         $this->showPago = false;
         $this->comandaAPagar = null;
         $this->tipoPago = '';
+        $this->paso = 'pago';
+        $this->clienteNombre = '';
+        $this->clienteRtn = '';
     }
 };
 ?>
@@ -174,7 +225,6 @@ function construirPDF(data) {
     var altoPagina = 140 + (itemLines * 4.5) + 65;
     if (altoPagina < 200) altoPagina = 200;
 
-    // Si hay descuentos, agregar espacio para la fila extra en totales
     var hayDescuentos = (data.detalles || []).some(function(d) { return d.descuento > 0; });
     if (hayDescuentos) altoPagina += 6;
 
@@ -191,7 +241,6 @@ function construirPDF(data) {
     function setGray()   { doc.setTextColor(gray[0],  gray[1],  gray[2]);  }
     function fillGreen() { doc.setFillColor(green[0], green[1], green[2]); }
 
-    // ── ENCABEZADO ────────────────────────────────────────────────
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(7.5);
     setGreen();
@@ -217,7 +266,6 @@ function construirPDF(data) {
     });
     y += 1;
 
-    // CAI (banda verde)
     fillGreen();
     doc.roundedRect(3, y, W - 6, 6, 1, 1, 'F');
     doc.setFont('helvetica', 'bold');
@@ -226,7 +274,6 @@ function construirPDF(data) {
     doc.text('CAI: 47E269-41C2F2-514DE0-63BE03-090945-33', W / 2, y + 3.8, { align: 'center' });
     y += 9;
 
-    // ── FECHA ─────────────────────────────────────────────────────
     var meses = ['','enero','febrero','marzo','abril','mayo','junio',
                  'julio','agosto','septiembre','octubre','noviembre','diciembre'];
     var fp    = data.fecha.split(' ')[0].split('/');
@@ -238,7 +285,6 @@ function construirPDF(data) {
     doc.text('Fecha:  ' + dd + '  de  ' + meses[mesIdx] + '  del  ' + aaaa, W / 2, y, { align: 'center' });
     y += 7;
 
-    // ── BADGE helper ─────────────────────────────────────────────
     function badge(label, x, yy, ancho) {
         fillGreen();
         doc.roundedRect(x, yy - 4, ancho, 5.5, 1, 1, 'F');
@@ -248,15 +294,29 @@ function construirPDF(data) {
         doc.text(label, x + 2, yy);
     }
 
-    // Cliente
     badge('Cliente:', 3, y, 18);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6.5);
     setBlack();
+    doc.text(data.cliente || 'Consumidor Final', 23, y);
+    y += 5;
+
+    if (data.rtn) {
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(6.5);
+        setGray();
+        doc.text('R.T.N.: ' + data.rtn, 23, y);
+        setBlack();
+        y += 5;
+    }
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(6);
+    setGray();
     doc.text('Mesa ' + data.mesa + '  \u00b7  ' + data.mesero, 23, y);
+    setBlack();
     y += 7;
 
-    // Tipo de pago
     badge('Tipo de pago:', 3, y, 26);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6.5);
@@ -264,13 +324,11 @@ function construirPDF(data) {
     doc.text(data.tipo_pago.charAt(0).toUpperCase() + data.tipo_pago.slice(1), 31, y);
     y += 7;
 
-    // ── SEPARADOR ────────────────────────────────────────────────
     doc.setDrawColor(green[0], green[1], green[2]);
     doc.setLineWidth(0.4);
     doc.line(3, y, W - 3, y);
     y += 5;
 
-    // ── CABECERA TABLA ────────────────────────────────────────────
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6.5);
     setGreen();
@@ -282,7 +340,6 @@ function construirPDF(data) {
     doc.line(3, y, W - 3, y);
     y += 5;
 
-    // ── ITEMS ─────────────────────────────────────────────────────
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6.5);
     setBlack();
@@ -322,7 +379,6 @@ function construirPDF(data) {
         }
     });
 
-    // ── TOTALES ───────────────────────────────────────────────────
     y += 2;
     doc.setDrawColor(green[0], green[1], green[2]);
     doc.setLineWidth(0.4);
@@ -333,7 +389,6 @@ function construirPDF(data) {
     var baseGravada = parseFloat(data.base_gravada) || (total / 1.15);
     var isv15       = parseFloat(data.isv_15)       || (total - baseGravada);
 
-    // Sumar total descontado de todos los ítems
     var totalDescuento = 0;
     (data.detalles || []).forEach(function(d) {
         totalDescuento += parseFloat(d.monto_descuento) || 0;
@@ -341,10 +396,10 @@ function construirPDF(data) {
     totalDescuento = Math.round(totalDescuento * 100) / 100;
 
     var totalRows = [
-        { label: 'Importe Exonerado L.',   val: '0.00',                  bold: false, color: 'black' },
-        { label: 'Importe Exento L.',       val: '0.00',                  bold: false, color: 'black' },
-        { label: 'Importe Gravado 15% L.',  val: baseGravada.toFixed(2),  bold: false, color: 'black' },
-        { label: 'ISV 15% L.',              val: isv15.toFixed(2),        bold: false, color: 'black' },
+        { label: 'Importe Exonerado L.',   val: '0.00',                 bold: false, color: 'black' },
+        { label: 'Importe Exento L.',       val: '0.00',                 bold: false, color: 'black' },
+        { label: 'Importe Gravado 15% L.',  val: baseGravada.toFixed(2), bold: false, color: 'black' },
+        { label: 'ISV 15% L.',              val: isv15.toFixed(2),       bold: false, color: 'black' },
     ];
 
     if (totalDescuento > 0) {
@@ -356,15 +411,14 @@ function construirPDF(data) {
     totalRows.forEach(function(row) {
         doc.setFont('helvetica', row.bold ? 'bold' : 'normal');
         doc.setFontSize(row.bold ? 7.5 : 6.5);
-        if (row.color === 'green')      { setGreen(); }
-        else if (row.color === 'red')   { doc.setTextColor(180, 40, 40); }
-        else                            { setBlack(); }
+        if (row.color === 'green')    { setGreen(); }
+        else if (row.color === 'red') { doc.setTextColor(180, 40, 40); }
+        else                          { setBlack(); }
         doc.text(row.label,  5,  y);
         doc.text(row.val,   74, y, { align: 'right' });
         y += row.bold ? 6 : 5;
     });
 
-    // ── NÚMERO DE FACTURA ─────────────────────────────────────────
     y += 3;
     badge('FACTURA', 3, y, 18);
     doc.setFont('helvetica', 'normal');
@@ -385,12 +439,10 @@ function construirPDF(data) {
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(6.5);
     setBlack();
-    // Usar numero_factura de la BD si está disponible, sino generar correlativo
     var numFactura = data.numero_factura || ('002-001-01-' + String(data.factura_id || data.comanda_id).padStart(8, '0'));
     doc.text(numFactura, 5, y);
     y += 9;
 
-    // ── RANGO AUTORIZADO ──────────────────────────────────────────
     doc.setDrawColor(green[0], green[1], green[2]);
     doc.setLineWidth(0.3);
     doc.line(3, y, W - 3, y);
@@ -404,7 +456,6 @@ function construirPDF(data) {
     doc.text('Fecha l\u00edmite de Emisi\u00f3n: 08/01/2027', W / 2, y, { align: 'center' });
     y += 6;
 
-    // ── PIE ───────────────────────────────────────────────────────
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(6);
     setGreen();
@@ -447,7 +498,6 @@ function construirPDF(data) {
 
     <main class="max-w-screen-2xl mx-auto px-4 py-6">
 
-        {{-- Contador --}}
         <div class="flex items-center gap-2 mb-5 px-1">
             <span class="text-base">📋</span>
             <span class="font-black text-sm tracking-widest uppercase" style="color: #6366f1;">Todas las órdenes activas</span>
@@ -561,7 +611,7 @@ function construirPDF(data) {
         @endif
     </main>
 
-    {{-- MODAL DE PAGO --}}
+    {{-- ── MODAL DE PAGO ────────────────────────────────────────── --}}
     @if($showPago)
     <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
         <div class="absolute inset-0" style="background: rgba(0,0,0,0.82);"
@@ -570,69 +620,192 @@ function construirPDF(data) {
         <div class="relative w-full max-w-sm rounded-2xl p-6 flex flex-col gap-5"
              style="background: #0d1117; border: 1.5px solid #eab30844; box-shadow: 0 0 60px #eab30811, 0 24px 48px rgba(0,0,0,0.5);">
 
-            <div class="flex items-center justify-center">
-                <div class="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
-                     style="background: #eab30822; border: 1.5px solid #eab30844;">
-                    💳
+            {{-- PASO 1: Tipo de pago --}}
+            @if($paso === 'pago')
+
+                <div class="flex items-center justify-center">
+                    <div class="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
+                         style="background: #eab30822; border: 1.5px solid #eab30844;">
+                        💳
+                    </div>
+                </div>
+
+                <div class="text-center">
+                    <div class="font-black text-lg" style="color: #f1f5f9;">Tipo de pago</div>
+                    <div class="text-sm mt-1" style="color: #475569;">Elige cómo se realizará el cobro</div>
+                </div>
+
+                <div class="flex flex-col gap-3">
+                    @foreach([
+                        ['value' => 'efectivo',      'label' => 'Efectivo',      'icon' => '💵', 'color' => '#22c55e'],
+                        ['value' => 'transferencia', 'label' => 'Transferencia', 'icon' => '🏦', 'color' => '#3b82f6'],
+                        ['value' => 'tarjeta',       'label' => 'Tarjeta',       'icon' => '💳', 'color' => '#a855f7'],
+                    ] as $opcion)
+                        <button
+                            type="button"
+                            wire:click="$set('tipoPago', '{{ $opcion['value'] }}')"
+                            class="flex items-center gap-4 px-4 py-3 rounded-xl font-bold text-sm transition-all"
+                            style="
+                                background: {{ $tipoPago === $opcion['value'] ? $opcion['color'].'33' : '#1e2530' }};
+                                border: 1.5px solid {{ $tipoPago === $opcion['value'] ? $opcion['color'].'88' : '#2a3441' }};
+                                color: {{ $tipoPago === $opcion['value'] ? $opcion['color'] : '#94a3b8' }};
+                            "
+                        >
+                            <span class="text-xl">{{ $opcion['icon'] }}</span>
+                            <span>{{ $opcion['label'] }}</span>
+                            @if($tipoPago === $opcion['value'])
+                                <span class="ml-auto">✓</span>
+                            @endif
+                        </button>
+                    @endforeach
+                </div>
+
+                <div class="flex gap-3 mt-1">
+                    <button
+                        type="button"
+                        wire:click="cancelarPago"
+                        class="flex-1 py-3 rounded-xl font-bold text-sm hover:opacity-80 transition-all"
+                        style="background: #1e2530; color: #94a3b8; border: 1.5px solid #2a3441;"
+                    >
+                        Cancelar
+                    </button>
+                    <button
+                        type="button"
+                        wire:click="avanzarACliente"
+                        @if(!$tipoPago) disabled @endif
+                        class="flex-1 py-3 rounded-xl font-bold text-sm transition-all"
+                        style="
+                            background: {{ $tipoPago ? '#eab30822' : '#1e2530' }};
+                            color: {{ $tipoPago ? '#eab308' : '#475569' }};
+                            border: 1.5px solid {{ $tipoPago ? '#eab30844' : '#2a3441' }};
+                            {{ !$tipoPago ? 'opacity:.45; cursor:not-allowed;' : '' }}
+                        "
+                    >
+                        Siguiente →
+                    </button>
+                </div>
+
+            {{-- PASO 2: Datos del cliente --}}
+            @elseif($paso === 'cliente')
+
+                <div class="flex items-center justify-center">
+                    <div class="w-16 h-16 rounded-2xl flex items-center justify-center text-3xl"
+                         style="background: #10b98122; border: 1.5px solid #10b98144;">
+                        👤
+                    </div>
+                </div>
+
+                <div class="text-center">
+                    <div class="font-black text-lg" style="color: #f1f5f9;">Datos del cliente</div>
+                    <div class="text-sm mt-1" style="color: #475569;">El nombre es obligatorio para la factura</div>
+                </div>
+
+                <div class="flex flex-col gap-3">
+                    <div>
+                        <label class="block text-xs font-bold mb-1.5" style="color:#94a3b8;">
+                            Nombre <span style="color:#f87171;">*</span>
+                        </label>
+                        <input
+                            type="text"
+                            wire:model.live="clienteNombre"
+                            placeholder="Nombre del cliente"
+                            class="w-full px-4 py-3 rounded-xl text-sm outline-none transition-all"
+                            style="background:#1e2530; border:1.5px solid {{ $errors->has('clienteNombre') ? '#ef4444' : '#2a3441' }};
+                                   color:#f1f5f9;"
+                            autofocus
+                        />
+                        @error('clienteNombre')
+                            <div class="text-xs mt-1.5 font-semibold" style="color:#f87171;">{{ $message }}</div>
+                        @enderror
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-bold mb-1.5" style="color:#94a3b8;">
+                            RTN <span style="color:#475569;">(opcional)</span>
+                        </label>
+                        <input
+                            type="text"
+                            wire:model.live="clienteRtn"
+                            placeholder="0000-0000-000000"
+                            class="w-full px-4 py-3 rounded-xl text-sm outline-none transition-all"
+                            style="background:#1e2530; border:1.5px solid #2a3441; color:#f1f5f9;"
+                        />
+                    </div>
+                </div>
+
+                <div class="flex gap-3 mt-1">
+                    <button
+                        type="button"
+                        wire:click="volverAPago"
+                        class="flex-1 py-3 rounded-xl font-bold text-sm hover:opacity-80 transition-all"
+                        style="background: #1e2530; color: #94a3b8; border: 1.5px solid #2a3441;"
+                    >
+                        ← Volver
+                    </button>
+                    <button
+                        type="button"
+                        wire:click="realizarPago"
+                        class="flex-1 py-3 rounded-xl font-bold text-sm transition-all"
+                        style="background:#10b98122; color:#10b981; border:1.5px solid #10b98144;"
+                    >
+                        💰 Confirmar
+                    </button>
+                </div>
+
+            @endif
+            {{-- fin @if($paso) --}}
+
+        </div>
+    </div>
+    @endif
+    {{-- fin @if($showPago) --}}
+
+    {{-- ── MODAL: CAJA CERRADA ─────────────────────────────────── --}}
+    @if($showCajaCerrada)
+    <div class="fixed inset-0 z-50 flex items-center justify-center p-4">
+        <div class="absolute inset-0" style="background: rgba(0,0,0,0.82);"
+             wire:click="$set('showCajaCerrada', false)"></div>
+
+        <div class="relative w-full max-w-sm rounded-2xl p-7 flex flex-col gap-5 text-center"
+             style="background: #0d1117; border: 1.5px solid #ef444444;
+                    box-shadow: 0 0 60px #ef444415, 0 24px 48px rgba(0,0,0,0.6);">
+
+            <div class="flex justify-center">
+                <div class="w-20 h-20 rounded-2xl flex items-center justify-center text-4xl"
+                     style="background: #ef444422; border: 1.5px solid #ef444444;">
+                    🔒
                 </div>
             </div>
 
-            <div class="text-center">
-                <div class="font-black text-lg" style="color: #f1f5f9;">Seleccionar tipo de pago</div>
-                <div class="text-sm mt-1" style="color: #475569;">Elige cómo se realizará el cobro</div>
+            <div>
+                <div class="font-black text-xl mb-2" style="color: #f1f5f9;">Caja cerrada</div>
+                <div class="text-sm leading-relaxed" style="color: #64748b;">
+                    No es posible realizar pagos ni emitir facturas mientras la caja esté cerrada.
+                    <br><br>
+                    Abre la caja para comenzar a facturar.
+                </div>
             </div>
 
             <div class="flex flex-col gap-3">
-                @foreach([
-                    ['value' => 'efectivo',      'label' => 'Efectivo',      'icon' => '💵', 'color' => '#22c55e'],
-                    ['value' => 'transferencia', 'label' => 'Transferencia', 'icon' => '🏦', 'color' => '#3b82f6'],
-                    ['value' => 'tarjeta',       'label' => 'Tarjeta',       'icon' => '💳', 'color' => '#a855f7'],
-                ] as $opcion)
-                    <button
-                        type="button"
-                        wire:click="$set('tipoPago', '{{ $opcion['value'] }}')"
-                        class="flex items-center gap-4 px-4 py-3 rounded-xl font-bold text-sm transition-all"
-                        style="
-                            background: {{ $tipoPago === $opcion['value'] ? $opcion['color'].'33' : '#1e2530' }};
-                            border: 1.5px solid {{ $tipoPago === $opcion['value'] ? $opcion['color'].'88' : '#2a3441' }};
-                            color: {{ $tipoPago === $opcion['value'] ? $opcion['color'] : '#94a3b8' }};
-                        "
-                    >
-                        <span class="text-xl">{{ $opcion['icon'] }}</span>
-                        <span>{{ $opcion['label'] }}</span>
-                        @if($tipoPago === $opcion['value'])
-                            <span class="ml-auto">✓</span>
-                        @endif
-                    </button>
-                @endforeach
-            </div>
-
-            <div class="flex gap-3 mt-1">
+                <a
+                    href="{{ route('caja') }}"
+                    class="w-full py-3.5 rounded-xl font-black text-sm transition-all text-center"
+                    style="background:#10b98122; color:#10b981; border:1.5px solid #10b98144;"
+                >
+                    🔓 Ir a apertura de caja
+                </a>
                 <button
                     type="button"
-                    wire:click="cancelarPago"
-                    class="flex-1 py-3 rounded-xl font-bold text-sm hover:opacity-80 transition-all"
-                    style="background: #1e2530; color: #94a3b8; border: 1.5px solid #2a3441;"
+                    wire:click="$set('showCajaCerrada', false)"
+                    class="w-full py-3 rounded-xl font-bold text-sm transition-all hover:opacity-80"
+                    style="background: #1a2030; color: #94a3b8; border: 1.5px solid #2a3441;"
                 >
-                    Cancelar
-                </button>
-                <button
-                    type="button"
-                    wire:click="realizarPago"
-                    @if(!$tipoPago) disabled @endif
-                    class="flex-1 py-3 rounded-xl font-bold text-sm transition-all"
-                    style="
-                        background: {{ $tipoPago ? '#eab30822' : '#1e2530' }};
-                        color: {{ $tipoPago ? '#eab308' : '#475569' }};
-                        border: 1.5px solid {{ $tipoPago ? '#eab30844' : '#2a3441' }};
-                        {{ !$tipoPago ? 'opacity:.45; cursor:not-allowed;' : '' }}
-                    "
-                >
-                    💰 Realizar pago
+                    Cerrar
                 </button>
             </div>
         </div>
     </div>
     @endif
+    {{-- fin @if($showCajaCerrada) --}}
 
 </div>
