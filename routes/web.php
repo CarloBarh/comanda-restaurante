@@ -22,6 +22,7 @@ Route::livewire('/monitor-general', 'monitor-general')->name('monitor.general');
 Route::livewire('/historico', 'historico-pedidos')->name('historico');
 Route::livewire('/facturas','facturas')->name('facturas');
 Route::livewire('/facturas/{factura}', 'factura-detalles')->name('facturas.detalle');
+Route::livewire('/editor-croquis', 'editor-croquis')->name('editor.croquis');
 
 Route::livewire('/gastos','gastos')->name('gastos');
 
